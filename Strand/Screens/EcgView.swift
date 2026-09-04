@@ -20,6 +20,7 @@ import WhoopProtocol
 
 struct EcgView: View {
     @EnvironmentObject var repo: Repository
+    @EnvironmentObject var live: LiveState
     @State private var sessions: [EcgWaveformSession] = []
 
     var body: some View {
@@ -35,15 +36,7 @@ struct EcgView: View {
                        onRefresh: { await load() }) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 EcgFramingCard()
-                EcgCaptureCard {
-                    // The verdict lands ~30 s after Start; reload then so the new session
-                    // appears without a manual pull. Unstructured and harmless if the
-                    // page is gone by then (load() on a value-copy view is a no-op read).
-                    Task {
-                        try? await Task.sleep(nanoseconds: 35_000_000_000)
-                        await load()
-                    }
-                }
+                EcgCaptureCard()
                 if sessions.isEmpty {
                     EcgNilState()
                 } else {
@@ -65,6 +58,14 @@ struct EcgView: View {
             }
         }
         .task { await load() }
+        .onChange(of: live.ecgProbe) { probe in
+            // The verdict lands 30–90 s after Start (arming + window); reload then so the
+            // new session appears without a manual pull. Fires only on the final text —
+            // both sentinels (arming, capturing) are skipped.
+            if probe != nil && probe != BLEManager.ecgProbeWaiting && probe != BLEManager.ecgProbeArming {
+                Task { await load() }
+            }
+        }
     }
 
     private func load() async {
@@ -176,6 +177,25 @@ private struct EcgSessionDetailView: View {
         return stride(from: 0, to: all.count, by: step).map { Double(all[$0]) }
     }
 
+    /// Waveform BPM inputs: the full stored series (never the stride-capped strip) and the
+    /// MEASURED sample rate (samples ÷ wall span), never an assumed firmware rate.
+    private var beatEstimate: EcgSessionSummary.BeatEstimate {
+        let ordered = samples.sorted { $0.seq < $1.seq }
+        let all = ordered.flatMap { $0.samples }
+        let stamps = ordered.map(\.tsMs)
+        guard let lo = stamps.min(), let hi = stamps.max(), hi > lo, !all.isEmpty else {
+            return EcgSessionSummary.BeatEstimate(bpm: nil, beats: 0)
+        }
+        let sps = Double(all.count) / (Double(hi - lo) / 1000.0)
+        return EcgSessionSummary.estimateBpm(samples: all, samplesPerSec: sps)
+    }
+
+    /// Displayed wave rate: the estimate ONLY when the independent optical path agrees
+    /// (cross-validated display rule) — otherwise nil, and the tile says so honestly.
+    private var agreedBpm: Int? {
+        EcgSessionSummary.agreedWaveBpm(medianHr: summary.medianHr, estimate: beatEstimate)
+    }
+
     var body: some View {
         ScreenScaffold(title: "ECG capture", subtitle: "\(EcgFormat.sessionDate(session.startedAtMs))") {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
@@ -214,6 +234,8 @@ private struct EcgSessionDetailView: View {
                                  caption: String(localized: "\(summary.waveRecords) of \(summary.recordCount) records"))
                         StatTile(label: "Median heart rate", value: EcgFormat.median(summary),
                                  caption: EcgFormat.range(summary))
+                        StatTile(label: "Waveform BPM", value: EcgFormat.waveBpm(agreedBpm),
+                                 caption: EcgFormat.beatCaption(agreed: agreedBpm, beats: beatEstimate.beats))
                     }
                     NoopCard {
                         Text(EcgFormat.provenance(session))
@@ -307,6 +329,17 @@ private enum EcgFormat {
         return String(localized: "\(s.durationSec)s · \(Int((s.waveCoverage * 100).rounded()))% waveform · \(rate)")
     }
 
+    static func waveBpm(_ agreed: Int?) -> String {
+        guard let bpm = agreed else { return String(localized: "—") }
+        return String(localized: "\(bpm) bpm")
+    }
+
+    /// Beat count behind a shown estimate, or the honest nil-state when hidden.
+    static func beatCaption(agreed: Int?, beats: Int) -> String {
+        guard agreed != nil else { return String(localized: "too noisy to read") }
+        return String(localized: "\(beats) beats")
+    }
+
     /// Provenance: which strap build banked this, plus the standing disclaimer.
     static func provenance(_ session: EcgWaveformSession) -> String {
         let fw = session.firmware ?? String(localized: "unknown firmware")
@@ -346,8 +379,6 @@ private struct EcgCaptureCard: View {
     @EnvironmentObject var live: LiveState
     @AppStorage(PuffinExperiment.ecgKey) private var ecgEnabled = false
     @State private var showStartConfirm = false
-    /// Fired on Start so the parent reloads sessions once the ~30 s verdict lands.
-    var onRunStarted: () -> Void
 
     private var block: EcgCaptureBlock? {
         EcgCaptureBlock.check(connected: live.connected,
@@ -385,7 +416,6 @@ private struct EcgCaptureCard: View {
                             titleVisibility: .visible) {
             Button(String(localized: "Start ECG capture")) {
                 model.ecgStartCapture()
-                onRunStarted()
             }
             Button(String(localized: "Cancel"), role: .cancel) {}
         } message: {
@@ -400,11 +430,12 @@ private struct EcgProbeStatus: View {
     @EnvironmentObject var model: AppModel
     let text: String
     private var waiting: Bool { text == BLEManager.ecgProbeWaiting }
+    private var arming: Bool { text == BLEManager.ecgProbeArming }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if waiting {
-                Text("Capture running — keep holding the clasp.")
+            if arming {
+                Text("Waiting for the first waveform — hold the clasp.")
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
             } else {

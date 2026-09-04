@@ -64,4 +64,85 @@ public enum EcgSessionSummary {
             recordsPerSec: durationSec > 0 ? Double(records.count) / Double(durationSec) : 0
         )
     }
+
+// MARK: - Waveform BPM estimate (peak intervals, descriptive only)
+//
+// Estimates heart rate from the stored WAVEFORM SAMPLES (not the stamped bytes): detrend
+// with a 31-point moving average, take positive peaks above 1σ with a 0.30 s refractory,
+// and convert the median inter-peak interval to bpm. Returns nil unless at least 4 peaks
+// form a plausible rhythm (30...220 bpm); nil means "too noisy to read", never a guess.
+// No diagnosis, no HRV, no classification — a rate reading beside the stamped bytes.
+//
+// Validated on two real MG captures against the strap's own optical HR: a 74→60 fall
+// (estimate ~60) and an 82→93→82 stairs recovery (estimate ~90s). Single subject and
+// sessions — instrumentation, not a measurement. The record-period autocorrelation trap
+// (#194) is avoided structurally: peaks are detected as events, never spectrally, and
+// the validation asserted phase-spread across the record grid rather than a grid-locked
+// peak. Kotlin twin: `EcgSessionSummary.estimateBpm` — keep byte-identical.
+public struct BeatEstimate: Equatable, Sendable {
+    /// Whole-bpm estimate, or nil when the strip is too noisy to read.
+    public let bpm: Int?
+    /// Peaks admitted to the estimate (0 when unreadable).
+    public let beats: Int
+
+    public init(bpm: Int?, beats: Int) {
+        self.bpm = bpm; self.beats = beats
+    }
+}
+
+public static func estimateBpm(samples: [Int], samplesPerSec: Double) -> BeatEstimate {
+    guard samples.count >= 3, samplesPerSec > 0 else { return BeatEstimate(bpm: nil, beats: 0) }
+    // Detrend: 31-point centered moving average (edge-clamped), matching the validated setup.
+    let w = 31
+    var detrended = [Double]()
+    detrended.reserveCapacity(samples.count)
+    for i in samples.indices {
+        let lo = max(0, i - w / 2)
+        let hi = min(samples.count - 1, i + w / 2)
+        var sum = 0.0
+        for j in lo...hi { sum += Double(samples[j]) }
+        detrended.append(Double(samples[i]) - sum / Double(hi - lo + 1))
+    }
+    let mean = detrended.reduce(0, +) / Double(detrended.count)
+    let variance = detrended.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(detrended.count)
+    let sd = variance.squareRoot()
+    guard sd > 0 else { return BeatEstimate(bpm: nil, beats: 0) }
+    // Peaks: strictly greater than both neighbours (ties broken left), refractory 0.30 s.
+    let threshold = sd
+    let refractory = max(1, Int((0.30 * samplesPerSec).rounded()))
+    var peaks: [Int] = []
+    var last = -refractory * 2
+    for i in 1..<(detrended.count - 1) {
+        if detrended[i] > threshold && detrended[i] >= detrended[i - 1]
+            && detrended[i] > detrended[i + 1] && i - last >= refractory {
+            peaks.append(i)
+            last = i
+        }
+    }
+    guard peaks.count >= 4 else { return BeatEstimate(bpm: nil, beats: peaks.count) }
+    let ibis = zip(peaks, peaks.dropFirst()).map { $1 - $0 }.sorted()
+    let medianIbi = ibis[(ibis.count - 1) / 2]
+    guard medianIbi > 0 else { return BeatEstimate(bpm: nil, beats: peaks.count) }
+    let bpm = Int((60.0 * samplesPerSec / Double(medianIbi)).rounded())
+    guard (30...220).contains(bpm) else { return BeatEstimate(bpm: nil, beats: peaks.count) }
+    return BeatEstimate(bpm: bpm, beats: peaks.count)
+}
+
+// MARK: - Cross-validated display rule
+//
+// The peak detector tracks clean runs but locks onto T-waves or motion cadence on noisy
+// ones — always reading HIGH, never low, and no regularity gate separates the two (the
+// wrong answers are steady). So a waveform rate is shown ONLY when it agrees with the
+// INDEPENDENT optical path (the strap-stamped bytes, measured by different hardware):
+// within 10 bpm of their lower median. Agreement of two independent sensors is the
+// validation signal; anything else shows nothing rather than a confident wrong number.
+// The ±10 window is calibrated on eleven real runs (single subject): six agreements all
+// within 6, five disagreements all beyond 10. Provisional constant, principled shape.
+// Kotlin twin: `EcgSessionSummary.agreedWaveBpm` — keep byte-identical.
+public static func agreedWaveBpm(medianHr: Int?, estimate: BeatEstimate) -> Int? {
+    guard let median = medianHr, let bpm = estimate.bpm,
+          abs(bpm - median) <= 10 else { return nil }
+    return bpm
+}
+
 }

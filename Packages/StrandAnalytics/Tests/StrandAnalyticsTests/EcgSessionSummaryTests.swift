@@ -60,4 +60,83 @@ final class EcgSessionSummaryTests: XCTestCase {
         XCTAssertEqual(s.recordsPerSec, 0)
         XCTAssertEqual(s.medianHr, 70)
     }
+
+    // MARK: - estimateBpm (synthetic spike trains at known rates; real-capture
+    // validation lives in the analyzer's doc comment, not in fixtures)
+
+    /// A clean spike train: unit impulses every `period` samples over `count` peaks.
+    private func spikeTrain(period: Int, peaks: Int, amp: Int = 1000) -> [Int] {
+        var s = [Int](repeating: 0, count: period * peaks + 10)
+        for k in 0..<peaks { s[k * period + 5] = amp }
+        return s
+    }
+
+    func testClean60bpmTrain() {
+        // 100 Hz, one spike/sec -> 60 bpm, 6 beats.
+        let est = EcgSessionSummary.estimateBpm(samples: spikeTrain(period: 100, peaks: 6),
+                                                samplesPerSec: 100)
+        XCTAssertEqual(est.beats, 6)
+        XCTAssertEqual(est.bpm, 60)
+    }
+
+    func testClean90bpmTrain() {
+        // 100 Hz, spike every 67 samples (~0.67 s) -> ~90 bpm.
+        let est = EcgSessionSummary.estimateBpm(samples: spikeTrain(period: 67, peaks: 8),
+                                                samplesPerSec: 100)
+        XCTAssertEqual(est.bpm, 90)
+    }
+
+    func testFlatIsUnreadable() {
+        XCTAssertEqual(EcgSessionSummary.estimateBpm(samples: [Int](repeating: 0, count: 500),
+                                                     samplesPerSec: 100),
+                       EcgSessionSummary.BeatEstimate(bpm: nil, beats: 0))
+        XCTAssertNil(EcgSessionSummary.estimateBpm(samples: [Int](repeating: 7, count: 500),
+                                                   samplesPerSec: 100).bpm)
+    }
+
+    func testTooFewBeatsIsUnreadable() {
+        // Two spikes only: below the 4-beat floor, even though the rate is sensible.
+        let est = EcgSessionSummary.estimateBpm(samples: spikeTrain(period: 100, peaks: 2),
+                                                samplesPerSec: 100)
+        XCTAssertNil(est.bpm)
+        XCTAssertEqual(est.beats, 2)
+    }
+
+    func testImplausiblySlowIsRejected() {
+        // Four spikes 3 s apart: detected, but 20 bpm is outside 30...220, so nil.
+        let est = EcgSessionSummary.estimateBpm(samples: spikeTrain(period: 300, peaks: 4),
+                                                samplesPerSec: 100)
+        XCTAssertNil(est.bpm)
+        XCTAssertEqual(est.beats, 4)
+    }
+
+    func testEmptyAndDegenerate() {
+        XCTAssertNil(EcgSessionSummary.estimateBpm(samples: [], samplesPerSec: 100).bpm)
+        XCTAssertNil(EcgSessionSummary.estimateBpm(samples: [1, 2], samplesPerSec: 100).bpm)
+        XCTAssertNil(EcgSessionSummary.estimateBpm(samples: spikeTrain(period: 100, peaks: 6),
+                                                   samplesPerSec: 0).bpm)
+    }
+
+    // MARK: - agreedWaveBpm (cross-validated display rule)
+
+    func testAgreementShows() {
+        // Within 10 of the stamped median: the number may show.
+        XCTAssertEqual(EcgSessionSummary.agreedWaveBpm(
+            medianHr: 63, estimate: EcgSessionSummary.BeatEstimate(bpm: 65, beats: 28)), 65)
+        // Boundary is inclusive.
+        XCTAssertEqual(EcgSessionSummary.agreedWaveBpm(
+            medianHr: 60, estimate: EcgSessionSummary.BeatEstimate(bpm: 70, beats: 28)), 70)
+    }
+
+    func testDisagreementHides() {
+        // T-wave lock (reads high): hidden, not shown wrong.
+        XCTAssertNil(EcgSessionSummary.agreedWaveBpm(
+            medianHr: 67, estimate: EcgSessionSummary.BeatEstimate(bpm: 98, beats: 40)))
+        // Unreadable estimate: hidden.
+        XCTAssertNil(EcgSessionSummary.agreedWaveBpm(
+            medianHr: 67, estimate: EcgSessionSummary.BeatEstimate(bpm: nil, beats: 2)))
+        // No stamped median to agree with: hidden.
+        XCTAssertNil(EcgSessionSummary.agreedWaveBpm(
+            medianHr: nil, estimate: EcgSessionSummary.BeatEstimate(bpm: 65, beats: 28)))
+    }
 }
