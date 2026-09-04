@@ -2727,6 +2727,7 @@
     <string name="l10n_ecg_screen_blocked_variant">Waiting for your strap to identify as a WHOOP MG.</string>
     <string name="l10n_ecg_screen_blocked_bond">Needs the encrypted bond — pair the strap first.</string>
     <string name="l10n_ecg_screen_running">Capture running — keep holding the clasp.</string>
+    <string name="l10n_ecg_screen_arming">Waiting for the first waveform — hold the clasp.</string>
     <string name="l10n_ecg_screen_cancel">Cancel</string>
     <string name="l10n_ecg_screen_strip_description">Waveform strip</string>
     <string name="l10n_health_screen_ecg">ECG</string>

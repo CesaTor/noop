@@ -1468,8 +1468,14 @@ class WhoopBleClient(
         const val WAITING_EXTENDED_BATTERY_PROBE = "__waiting__"
         /** MG ECG capture probe: sentinel value of [ecgProbe] while the 30 s listen window is open. */
         const val ECG_PROBE_WAITING = "__waiting__"
+        /** MG ECG capture probe: sentinel while ARMED-WAITING for the first waveform (twin of the above).
+         *  The window — and its 30 s verdict — opens on first signal, not on tap. */
+        const val ECG_PROBE_ARMING = "__arming__"
         /** MG ECG capture probe: how long the turn-on sequence listens before rendering its verdict. */
         private const val ECG_PROBE_WINDOW_MS = 30_000L
+        /** MG ECG capture probe: how long a run waits for its first waveform before rendering a
+         *  verdict on the silence. Bounds tap-to-verdict at outer + window worst case. */
+        private const val ECG_PROBE_OUTER_WINDOW_MS = 60_000L
         /** MG ECG capture probe: cap on recorded steps (a run sends three; headroom is for unsolicited replies). */
         private const val ECG_PROBE_MAX_STEPS = 12
         /** MG ECG capture probe: cap on recorded candidate-frame lines (a chatty stream must not grow the report). */
@@ -8310,7 +8316,6 @@ class WhoopBleClient(
             Whoop5Ecg.ControlSignal.START.raw,
             "TOGGLE_LABRADOR_DATA_GENERATION",
         )
-        scheduleEcgProbeVerdict()
     }
 
     /**
@@ -8336,11 +8341,13 @@ class WhoopBleClient(
         sendLabradorCommand(Whoop5Ecg.TOGGLE_SAVE_RAW_ECG_CMD, 0, "TOGGLE_LABRADOR_RAW_SAVE")
         sendLabradorCommand(Whoop5Ecg.TOGGLE_REALTIME_FILTERED_ECG_CMD, 0, "TOGGLE_LABRADOR_FILTERED")
         _ecgCaptureRunning.value = false
-        if (reportsResult) scheduleEcgProbeVerdict()
     }
 
     /** Clear the probe result (dialog dismissed). Twin of Swift clearEcgProbe(). */
     fun clearEcgProbe() { _ecgProbe.value = null }
+
+    private var ecgProbeWindowOpen = false
+    private var ecgProbeRunStartMs = 0L
 
     private fun beginEcgProbeRun(clearingSteps: Boolean) {
         if (clearingSteps) {
@@ -8349,31 +8356,59 @@ class WhoopBleClient(
             ecgProbePacketsSeen = 0
             ecgProbeRawRecordsSeen = 0
             ecgProbeRawRecordsWithSignal = 0
+            ecgProbeWindowOpen = false
         }
         ecgProbeRunToken++
-        ecgProbeDeadlineMs = System.currentTimeMillis() + ECG_PROBE_WINDOW_MS
-        _ecgProbe.value = ECG_PROBE_WAITING
+        ecgProbeRunStartMs = System.currentTimeMillis()
+        // ARMED-WAITING, not capturing yet: the deadline is the outer silence bound, and the
+        // verdict scheduled below fires on it unless the window opens first (which stands the
+        // outer down via the windowOpen flag and schedules its own). Twin of Swift beginEcgProbeRun.
+        ecgProbeDeadlineMs = System.currentTimeMillis() + ECG_PROBE_OUTER_WINDOW_MS
+        _ecgProbe.value = ECG_PROBE_ARMING
+        scheduleEcgProbeVerdict(ECG_PROBE_OUTER_WINDOW_MS, windowRun = false)
     }
 
-    /** Render the verdict once the listen window closes. Token-guarded: a re-tap supersedes. */
-    private fun scheduleEcgProbeVerdict() {
+    /**
+     * First waveform while armed: the capture window opens HERE. Re-arms the deadline to the
+     * capture window, flips the status from arming to capturing, and schedules the window's
+     * verdict. The time-gap writer banks into the same session (no explicit open needed —
+     * records before the window were dropped, so the session starts with signal).
+     * Idempotent per run.
+     */
+    private fun openEcgProbeWindow() {
+        if (ecgProbeWindowOpen) return
+        ecgProbeWindowOpen = true
+        ecgProbeDeadlineMs = System.currentTimeMillis() + ECG_PROBE_WINDOW_MS
+        _ecgProbe.value = ECG_PROBE_WAITING
+        log("ECG probe: first waveform — capture window open (30 s)")
+        scheduleEcgProbeVerdict(ECG_PROBE_WINDOW_MS, windowRun = true)
+    }
+
+    /**
+     * Render the verdict when a phase closes. `windowRun = false` is the outer arming verdict
+     * (fires unless the window opened first); `windowRun = true` is the capture verdict.
+     * Token-guarded: a re-tap supersedes. The reported seconds are the honest tap-to-verdict
+     * elapsed, not the nominal window.
+     */
+    private fun scheduleEcgProbeVerdict(afterMs: Long, windowRun: Boolean) {
         val token = ecgProbeRunToken
         handler.postDelayed({
             if (ecgProbeRunToken != token) return@postDelayed
+            if (!windowRun && ecgProbeWindowOpen) return@postDelayed
             ecgProbeDeadlineMs = 0L
+            val elapsedSec = maxOf(1, ((System.currentTimeMillis() - ecgProbeRunStartMs) / 1000).toInt())
             val text = Whoop5EcgProbe.report(
-                ecgProbeSteps, ecgProbePacketsSeen, ecgProbeCandidates,
-                (ECG_PROBE_WINDOW_MS / 1000).toInt(),
-            ) + ecgRawChannelSection()
+                ecgProbeSteps, ecgProbePacketsSeen, ecgProbeCandidates, elapsedSec,
+            ) + ecgRawChannelSection(elapsedSec)
             log("ECG probe:\n$text")
             _ecgProbe.value = text
             // Auto-stop: a turn-on run leaves generation + both streams ON. The verdict is rendered,
-            // so restore the pre-run state now — reportsResult=false sends no second verdict and the
+            // so restore the pre-run state now — reportsResult=false sends no second verdict, and the
             // time-gap writer banks residuals into the same session, never a new one. Guarded on the
-            // running flag so Stop/wrist runs don't re-fire; a dropped link declines in the gates and
-            // the running state honestly survives.
+            // running flag so Stop runs don't re-fire; a dropped link declines in the gates and the
+            // running state honestly survives.
             if (_ecgCaptureRunning.value) ecgStopCapture(reportsResult = false)
-        }, ECG_PROBE_WINDOW_MS)
+        }, afterMs)
     }
 
     /**
@@ -8382,8 +8417,7 @@ class WhoopBleClient(
      * Deliberately NOT part of the shared `Whoop5EcgProbe.report`, so the verdict inputs keep
      * their cross-platform meaning.
      */
-    internal fun ecgRawChannelSection(): String {
-        val windowSeconds = (ECG_PROBE_WINDOW_MS / 1000).toInt()
+    internal fun ecgRawChannelSection(windowSeconds: Int = (ECG_PROBE_WINDOW_MS / 1000).toInt()): String {
         val sb = StringBuilder("\nType-43 raw channel in ${windowSeconds}s: ")
         if (ecgProbeRawRecordsSeen == 0) {
             sb.append("0 records — the multiplexed raw pump emitted nothing during the window (off, or never started).\n")
@@ -8496,6 +8530,14 @@ class WhoopBleClient(
         if (ecgProbeArmed) {
             ecgProbeRawRecordsSeen++
             if (signalPresent) ecgProbeRawRecordsWithSignal++
+        }
+        // Signal-armed window (twin of Apple's openEcgProbeWindow): while a probe run is
+        // armed-waiting, pre-signal flats are counted above but never banked — the first
+        // waveform opens the window, so a stored session starts with signal. Outside probe
+        // runs the writer banks everything, preserving passive time-gap sessions.
+        if (ecgProbeArmed && !ecgProbeWindowOpen) {
+            if (signalPresent) openEcgProbeWindow()
+            return
         }
         val hrBpm = _state.value.heartRate?.takeIf { it in 30..220 }
         val device = deviceId

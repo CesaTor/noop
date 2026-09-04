@@ -2614,6 +2614,7 @@
     <string name="l10n_ecg_screen_blocked_variant">等待你的腕带识别为 WHOOP MG。</string>
     <string name="l10n_ecg_screen_blocked_bond">需要加密连接——请先配对腕带。</string>
     <string name="l10n_ecg_screen_running">采集中——请继续按住表扣。</string>
+    <string name="l10n_ecg_screen_arming">等待第一个波形——请按住表扣。</string>
     <string name="l10n_ecg_screen_cancel">取消</string>
     <string name="l10n_ecg_screen_strip_description">波形图</string>
     <string name="l10n_health_screen_ecg">心电图</string>
