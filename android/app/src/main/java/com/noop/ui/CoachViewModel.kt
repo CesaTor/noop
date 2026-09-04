@@ -199,7 +199,10 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Best-effort: fetch the current provider's live model list using the saved key and merge
      * the returned ids into [availableModels] (curated ids first, then any new live ids). Never
-     * throws and never changes the current selection; a failure simply leaves the list as-is.
+     * throws and never changes the current selection. A failure no longer fails SILENTLY: the
+     * outcome carries the concrete reason (withheld cross-provider key, unreachable server, HTTP
+     * status) and it is shown as the setup error — an empty dropdown with no reason is what made
+     * a never-sent key look like a broken server.
      */
     fun refreshModels(ctx: Context) {
         if (_refreshingModels.value) return
@@ -207,19 +210,21 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         val p = _provider.value
         val url = _customBaseUrl.value
         _refreshingModels.value = true
+        _error.value = null
         viewModelScope.launch {
             try {
-                val live = aiCoach.fetchModels(appCtx, p, url, _customAuthHeader.value)
+                val outcome = aiCoach.fetchModels(appCtx, p, url, _customAuthHeader.value)
                 if (p == _provider.value) {
-                    val merged = (_availableModels.value + live).distinct()
+                    val merged = (_availableModels.value + outcome.models).distinct()
                     _availableModels.value = merged
                     // For Custom there's no curated/default model, adopt the first the server lists.
                     if (p == AiProvider.CUSTOM && _model.value.isBlank() && merged.isNotEmpty()) {
                         selectModel(appCtx, merged.first())
                     }
+                    _error.value = outcome.error
                 }
-            } catch (_: Exception) {
-                // Best-effort, keep whatever list we already have.
+            } catch (e: Exception) {
+                if (p == _provider.value) _error.value = e.message ?: "Something went wrong. Please try again."
             } finally {
                 _refreshingModels.value = false
             }

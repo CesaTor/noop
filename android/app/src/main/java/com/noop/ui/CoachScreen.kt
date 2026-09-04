@@ -109,6 +109,7 @@ private fun CoachSetup(vm: CoachViewModel) {
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
+    val setupError by vm.error.collectAsStateWithLifecycle()
     val customBaseUrl by vm.customBaseUrl.collectAsStateWithLifecycle()
     val customAuthHeader by vm.customAuthHeader.collectAsStateWithLifecycle()
     var keyInput by remember { mutableStateOf("") }
@@ -138,6 +139,9 @@ private fun CoachSetup(vm: CoachViewModel) {
                     selection = provider,
                     label = { it.displayName },
                     onSelect = { vm.selectProvider(context, it) },
+                    // Four providers overflow a phone-width track at intrinsic size and clip Custom
+                    // off-screen with no scroll — equal-width segments keep every option visible.
+                    adaptsToAvailableWidth = true,
                 )
             }
 
@@ -180,12 +184,18 @@ private fun CoachSetup(vm: CoachViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Overline("Model")
-                    Spacer(Modifier.weight(1f))
                     RefreshModelsButton(
                         refreshing = refreshingModels,
                         // Cloud providers need a saved key to fetch; a local server just needs a URL.
                         enabled = if (isCustom) customBaseUrl.isNotBlank() else vm.hasKey(context),
-                        onClick = { vm.refreshModels(context) },
+                        // A typed-but-unsaved key is the classic empty-list trap: Refresh alone used
+                        // to fetch without it (Connect was the only path that saved). An explicit
+                        // refresh tap is its own network consent, so commit the field first — same
+                        // as Connect already does below.
+                        onClick = {
+                            if (keyInput.isNotBlank()) vm.saveKey(context, keyInput)
+                            vm.refreshModels(context)
+                        },
                     )
                 }
                 ModelDropdown(
@@ -223,7 +233,9 @@ private fun CoachSetup(vm: CoachViewModel) {
                     onClick = { vm.saveKey(context, keyInput) },
                 )
             }
-
+            // Refresh/Connect failure reason (red). The model list used to fail silently — an empty
+            // dropdown with no reason made a never-sent key look like a broken server.
+            setupError?.let { Text(it, style = NoopType.subhead, color = Palette.statusCritical) }
             // Privacy note, one line, always visible.
             PrivacyNote(local = isCustom)
         }
