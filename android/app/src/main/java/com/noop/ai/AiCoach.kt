@@ -212,6 +212,16 @@ class AiCoach(
             AiProvider.CUSTOM -> applyCustomAuthHeader(builder, key, customAuthHeader)
         }
 
+        // Field diagnostics (logcat, NEVER the key itself): which URL and which auth scheme the
+        // request carries. Tells a never-sent key apart from a server-side rejection without
+        // logging key material — only the scheme and the key length.
+        val authDesc = when {
+            provider == AiProvider.CUSTOM && key.isNullOrBlank() -> "none"
+            provider == AiProvider.CUSTOM -> "${customAuthHeader.name.lowercase()} (key ${key!!.length} chars)"
+            else -> "cloud-${provider.name.lowercase()} (key ${key!!.length} chars)"
+        }
+        android.util.Log.d("AiCoach", "Model list: GET $url auth=$authDesc")
+
         runCatching {
             val (code, text) = execute(builder.build())
             if (code !in 200..299) {
@@ -789,6 +799,8 @@ class AiCoach(
          * Why a model-list fetch cannot even be attempted, or null when it can. Pure so it is
          * JVM-testable without a network or a device: [key] is the guarded read for [provider],
          * [anyKeySaved] whether ANY key is stored, [owner] which provider that key was saved for.
+         * Mirrors [AiKeyStore.read] exactly: a legacy key (no recorded owner) still serves the
+         * cloud providers but is NEVER sent to a Custom URL.
          */
         internal fun modelListKeyError(
             provider: AiProvider,
@@ -796,16 +808,15 @@ class AiCoach(
             anyKeySaved: Boolean,
             owner: AiProvider?,
         ): String? = when {
-            key != null -> null
+            key != null && (provider != AiProvider.CUSTOM || owner == AiProvider.CUSTOM) -> null
             provider == AiProvider.CUSTOM && !anyKeySaved -> null // keyless local server: proceed unauthenticated
             provider == AiProvider.CUSTOM ->
-                // A key IS stored but belongs to a cloud provider — the guarded read withheld it rather
-                // than leak it to this endpoint. Name the owner so the fix (re-save under Custom) is obvious.
-                "The saved API key belongs to ${owner?.displayName ?: "another provider"} and was not sent — paste it while Custom is selected and tap Connect, or leave the key empty for a keyless server."
+                // A cloud (or legacy) key is stored — the guarded read withheld it rather than leak
+                // it to this endpoint. Name the owner so the fix (re-save under Custom) is obvious.
+                "The saved API key belongs to ${owner?.displayName ?: "an earlier save"} and was not sent — paste it while Custom is selected and tap Connect, or leave the key empty for a keyless server."
             !anyKeySaved -> "No API key saved — paste your ${provider.displayName} key and tap Save first."
-            else -> "The saved API key belongs to ${owner?.displayName ?: "another provider"} and was not sent — save your ${provider.displayName} key first."
+            else -> "The saved API key belongs to ${owner?.displayName ?: "an earlier save"} and was not sent — save your ${provider.displayName} key first."
         }
-
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
         /**
