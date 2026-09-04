@@ -184,12 +184,18 @@ private fun CoachSetup(vm: CoachViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Overline("Model")
-                    Spacer(Modifier.weight(1f))
                     RefreshModelsButton(
                         refreshing = refreshingModels,
                         // Cloud providers need a saved key to fetch; a local server just needs a URL.
                         enabled = if (isCustom) customBaseUrl.isNotBlank() else vm.hasKey(context),
-                        onClick = { vm.refreshModels(context) },
+                        // A typed-but-unsaved key is the classic empty-list trap: Refresh alone used
+                        // to fetch without it (Connect was the only path that saved). An explicit
+                        // refresh tap is its own network consent, so commit the field first — same
+                        // as Connect already does below.
+                        onClick = {
+                            if (keyInput.isNotBlank()) vm.saveKey(context, keyInput)
+                            vm.refreshModels(context)
+                        },
                     )
                 }
                 ModelDropdown(
