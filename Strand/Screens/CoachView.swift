@@ -319,6 +319,11 @@ struct CoachView: View {
                 Text("Model").strandOverline()
                 Spacer()
                 Button {
+                    // A typed-but-unsaved key is the classic empty-list trap: Refresh alone used to
+                    // fetch without it (Connect/Save was the only path that saved). An explicit
+                    // refresh tap is its own network consent, so commit the field first — twin of
+                    // the Android setup card, which does the same before its model-list fetch.
+                    saveKey()
                     Task { await coach.refreshModels() }
                 } label: {
                     Label("Refresh models", systemImage: "arrow.clockwise")
@@ -327,7 +332,11 @@ struct CoachView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(StrandPalette.accent)
-                .disabled(!coach.hasKey)
+                // A keyless Custom server is valid (a URL is all it needs); the cloud providers
+                // still need a saved key. Twin of the Android Refresh enable rule.
+                .disabled(coach.provider == .custom
+                    ? coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    : !coach.hasKey)
                 .help("Fetch the available models from \(coach.provider.displayName) using your saved key")
                 .accessibilityLabel("Refresh models from provider")
             }
