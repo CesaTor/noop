@@ -2698,6 +2698,15 @@
     <string name="l10n_ecg_screen_records_value">%1$d</string>
     <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
     <string name="l10n_ecg_screen_firmware_unknown">nieznane</string>
+    <string name="l10n_ecg_screen_start_capture">Rozpocznij zapis EKG</string>
+    <string name="l10n_ecg_screen_stop_capture">Zatrzymaj zapis EKG</string>
+    <string name="l10n_ecg_screen_confirm_body">Prosi twoje MG o uruchomienie podsystemu EKG i zapisuje to, co wraca. Nie pomiar medyczny ani diagnoza. Przytrzymaj oba wgłębienia zapięcia przez całe okno.</string>
+    <string name="l10n_ecg_screen_blocked_offline">Brak połączenia. Otwórz Live, aby sparować.</string>
+    <string name="l10n_ecg_screen_blocked_variant">Oczekiwanie, aż opaska zostanie rozpoznana jako WHOOP MG.</string>
+    <string name="l10n_ecg_screen_blocked_bond">Wymaga szyfrowanego połączenia — najpierw sparuj opaskę.</string>
+    <string name="l10n_ecg_screen_running">Zapis trwa — trzymaj zapięcie.</string>
+    <string name="l10n_ecg_screen_arming">Oczekiwanie na pierwszy przebieg — trzymaj zapięcie.</string>
+    <string name="l10n_ecg_screen_cancel">Anuluj</string>
     <string name="l10n_ecg_screen_strip_description">Zapis EKG</string>
     <string name="l10n_health_screen_ecg">EKG</string>
 </resources>

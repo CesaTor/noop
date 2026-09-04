@@ -2707,6 +2707,15 @@
     <string name="l10n_ecg_screen_records_value">%1$d</string>
     <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
     <string name="l10n_ecg_screen_firmware_unknown">unbekannt</string>
+    <string name="l10n_ecg_screen_start_capture">EKG-Aufnahme starten</string>
+    <string name="l10n_ecg_screen_stop_capture">EKG-Aufnahme stoppen</string>
+    <string name="l10n_ecg_screen_confirm_body">Fragt dein MG, sein EKG-Subsystem zu starten, und protokolliert, was zurückkommt. Keine medizinische Messung oder Diagnose. Halte beide Vertiefungen der Spange das ganze Fenster lang.</string>
+    <string name="l10n_ecg_screen_blocked_offline">Nicht verbunden. Öffne Live zum Koppeln.</string>
+    <string name="l10n_ecg_screen_blocked_variant">Wartet darauf, dass sich dein Strap als WHOOP MG zu erkennen gibt.</string>
+    <string name="l10n_ecg_screen_blocked_bond">Braucht die verschlüsselte Kopplung — kopple den Strap zuerst.</string>
+    <string name="l10n_ecg_screen_running">Aufnahme läuft — halte die Spange weiter.</string>
+    <string name="l10n_ecg_screen_arming">Warte auf die erste Wellenform — halte die Spange.</string>
+    <string name="l10n_ecg_screen_cancel">Abbrechen</string>
     <string name="l10n_ecg_screen_strip_description">EKG-Kurve</string>
     <string name="l10n_health_screen_ecg">EKG</string>
 </resources>

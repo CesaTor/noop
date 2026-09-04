@@ -57,6 +57,8 @@ import com.noop.protocol.HapticClock
 import com.noop.protocol.Reassembler
 import com.noop.protocol.Whoop5Variant
 import com.noop.protocol.Whoop5Ecg
+import com.noop.protocol.CommandNames
+import com.noop.protocol.Whoop5EcgProbe
 import com.noop.protocol.RebootProbeVariant
 import com.noop.protocol.Streams
 import com.noop.protocol.StandardHrContact
@@ -1464,6 +1466,20 @@ class WhoopBleClient(
          *  Mirrors Swift BackfillContinuation.defaultMaxAutoContinues. TUNABLE — needs on-strap validation. */
         /** #592: sentinel value of [extendedBatteryProbe] between sending the probe and its reply landing. */
         const val WAITING_EXTENDED_BATTERY_PROBE = "__waiting__"
+        /** MG ECG capture probe: sentinel value of [ecgProbe] while the 30 s listen window is open. */
+        const val ECG_PROBE_WAITING = "__waiting__"
+        /** MG ECG capture probe: sentinel while ARMED-WAITING for the first waveform (twin of the above).
+         *  The window — and its 30 s verdict — opens on first signal, not on tap. */
+        const val ECG_PROBE_ARMING = "__arming__"
+        /** MG ECG capture probe: how long the turn-on sequence listens before rendering its verdict. */
+        private const val ECG_PROBE_WINDOW_MS = 30_000L
+        /** MG ECG capture probe: how long a run waits for its first waveform before rendering a
+         *  verdict on the silence. Bounds tap-to-verdict at outer + window worst case. */
+        private const val ECG_PROBE_OUTER_WINDOW_MS = 60_000L
+        /** MG ECG capture probe: cap on recorded steps (a run sends three; headroom is for unsolicited replies). */
+        private const val ECG_PROBE_MAX_STEPS = 12
+        /** MG ECG capture probe: cap on recorded candidate-frame lines (a chatty stream must not grow the report). */
+        private const val ECG_PROBE_MAX_CANDIDATES = 12
 
         /** #592: how long to wait for a probe COMMAND_RESPONSE before treating silence as "no reply". */
         const val EXTENDED_BATTERY_PROBE_TIMEOUT_MS = 8_000L
@@ -6967,6 +6983,13 @@ class WhoopBleClient(
                             handleBroadcastHrGateReadBack(frame, connectedFamily == DeviceFamily.WHOOP5)
                         }
                     }
+                    // MG ECG capture probe: settle each command's outcome and hunt for the packet type
+                    // the ECG records arrive under. `ecgProbeArmed` is false outside a user-initiated
+                    // run, so this costs one Boolean read on every other frame. 5/MG only: a 4.0 never
+                    // carries these opcodes, and its family path must not change for an MG feature.
+                    if (ecgProbeArmed && connectedFamily == DeviceFamily.WHOOP5) {
+                        noteEcgProbeFrame(frame, parsed.crcOk == true)
+                    }
                     if (frame.size > cmdOff && (frame[cmdOff].toInt() and 0xFF) == CommandNumber.GET_DATA_RANGE.rawValue) {
                         // #451: dump raw GET_DATA_RANGE response bytes unconditionally (even if decode returns
                         // null) so a stale/wrong-epoch "newest" can be told apart from a frame-alignment bug in
@@ -8213,6 +8236,272 @@ class WhoopBleClient(
 
     /** Clear the #891 result (Settings row dismissed / disconnect). Twin of Swift clearEcgRawDataGate(). */
     fun clearEcgRawDataGate() { _ecgRawDataGate.value = null }
+    // ---- MG ECG capture probe (turn-on driver — twin of Apple's ecgStartCapture path) ----
+
+    private val _ecgProbe = MutableStateFlow<String?>(null)
+    /** The running probe's verdict text (or [ECG_PROBE_WAITING] while listening). Null when idle. */
+    val ecgProbe: StateFlow<String?> = _ecgProbe.asStateFlow()
+    private val _ecgCaptureRunning = MutableStateFlow(false)
+    /** True once a turn-on run starts until generation is stopped again (twin of `ecgMayBeRunning`). */
+    val ecgCaptureRunning: StateFlow<Boolean> = _ecgCaptureRunning.asStateFlow()
+    private var ecgProbeSteps = mutableListOf<Whoop5EcgProbe.Step>()
+    private var ecgProbePacketsSeen = 0
+    private var ecgProbeCandidates = mutableListOf<String>()
+    private var ecgProbeRunToken = 0
+    private var ecgProbeDeadlineMs = 0L
+    private var ecgProbeRawRecordsSeen = 0
+    private var ecgProbeRawRecordsWithSignal = 0
+    private val ecgProbeArmed: Boolean get() = System.currentTimeMillis() < ecgProbeDeadlineMs
+
+    /** The four Labrador opcodes this path may ever form. Nothing else travels [sendLabradorCommand]. */
+    private val ecgCommandOps = setOf(
+        Whoop5Ecg.SELECT_WRIST_CMD,
+        Whoop5Ecg.MAIN_CONTROL_ECG_DATA_GENERATION_CMD,
+        Whoop5Ecg.TOGGLE_SAVE_RAW_ECG_CMD,
+        Whoop5Ecg.TOGGLE_REALTIME_FILTERED_ECG_CMD,
+    )
+
+    private fun ecgCaptureGatesAllow(requiresOptIn: Boolean = true): Boolean {
+        if (requiresOptIn && !puffinExperiment.ecgListen) {
+            log("ECG probe: ignored — the Experimental ECG listen opt-in is off")
+            return false
+        }
+        if (connectedFamily != DeviceFamily.WHOOP5 || !whoop5Variant().isMG) {
+            log("ECG probe: ignored — strap is not a positively identified WHOOP MG (variant=${whoop5Variant().label})")
+            return false
+        }
+        if (!_state.value.connected) {
+            log("ECG probe: ignored — not connected")
+            return false
+        }
+        if (!didBond) {
+            log("ECG probe: ignored — needs the full encrypted bond, not the live-HR-only link")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Send one Labrador command on the bonded MG link. The dedicated sender (NOT [send], whose
+     * [CommandNumber] surface deliberately omits these opcodes): the family allowlist lives here, so a
+     * default install can never form these bytes. Gated bonded-MG + opt-in; unknown opcodes refused.
+     */
+    private fun sendLabradorCommand(cmd: Int, arg: Int, label: String) {
+        if (connectedFamily != DeviceFamily.WHOOP5 || !didBond || !whoop5Variant().isMG || !puffinExperiment.ecgListen) {
+            log("ECG probe: send refused — bonded MG + listen opt-in required ($label)")
+            return
+        }
+        if (cmd !in ecgCommandOps) {
+            log("ECG probe: send refused — opcode $cmd is not a Labrador command")
+            return
+        }
+        val requestsData = Whoop5Ecg.requestsRealtimeData(cmd, arg)
+        ecgProbeSteps.add(Whoop5EcgProbe.Step("$label($cmd)", Whoop5EcgProbe.CommandOutcome.NoReply, requestsData))
+        val s = seq.incrementAndGet() and 0xFF
+        enqueueWrite(PendingWrite(Whoop5Ecg.commandFrame(cmd, arg, s), true, null))
+        log("ECG probe: → $label($cmd)")
+    }
+
+    /** The turn-on sequence MINUS wrist selection (a persistent write with its own confirmation elsewhere):
+     *  toggleRealtimeFilteredECG(on) → toggleSaveRawECG(on) → mainControlECGDataGeneration(start). */
+    fun ecgStartCapture() {
+        if (!ecgCaptureGatesAllow()) return
+        _ecgCaptureRunning.value = true
+        beginEcgProbeRun(clearingSteps = true)
+        log("ECG probe: starting the ECG turn-on sequence on an MG (experimental, unvalidated instrumentation)")
+        sendLabradorCommand(Whoop5Ecg.TOGGLE_REALTIME_FILTERED_ECG_CMD, 1, "TOGGLE_LABRADOR_FILTERED")
+        sendLabradorCommand(Whoop5Ecg.TOGGLE_SAVE_RAW_ECG_CMD, 1, "TOGGLE_LABRADOR_RAW_SAVE")
+        sendLabradorCommand(
+            Whoop5Ecg.MAIN_CONTROL_ECG_DATA_GENERATION_CMD,
+            Whoop5Ecg.ControlSignal.START.raw,
+            "TOGGLE_LABRADOR_DATA_GENERATION",
+        )
+    }
+
+    /**
+     * The explicit OFF path: stop generation first, then drop both streams. `reportsResult = false`
+     * is the auto-stop path — same bytes, no verdict sheet from another screen. The OFF path outlives
+     * the opt-in (requiresOptIn = false): turning the feature off must not remove the only control
+     * that turns the STRAP off.
+     */
+    fun ecgStopCapture(reportsResult: Boolean = true) {
+        if (!ecgCaptureGatesAllow(requiresOptIn = false)) {
+            if (_ecgCaptureRunning.value) {
+                log("ECG probe: stop could not be sent (needs a connected MG) — the strap may still be streaming")
+            }
+            return
+        }
+        if (reportsResult) beginEcgProbeRun(clearingSteps = true) else ecgProbeSteps.clear()
+        log("ECG probe: stopping ECG data generation and both streams")
+        sendLabradorCommand(
+            Whoop5Ecg.MAIN_CONTROL_ECG_DATA_GENERATION_CMD,
+            Whoop5Ecg.ControlSignal.STOP.raw,
+            "TOGGLE_LABRADOR_DATA_GENERATION",
+        )
+        sendLabradorCommand(Whoop5Ecg.TOGGLE_SAVE_RAW_ECG_CMD, 0, "TOGGLE_LABRADOR_RAW_SAVE")
+        sendLabradorCommand(Whoop5Ecg.TOGGLE_REALTIME_FILTERED_ECG_CMD, 0, "TOGGLE_LABRADOR_FILTERED")
+        _ecgCaptureRunning.value = false
+    }
+
+    /** Clear the probe result (dialog dismissed). Twin of Swift clearEcgProbe(). */
+    fun clearEcgProbe() { _ecgProbe.value = null }
+
+    private var ecgProbeWindowOpen = false
+    private var ecgProbeRunStartMs = 0L
+
+    private fun beginEcgProbeRun(clearingSteps: Boolean) {
+        if (clearingSteps) {
+            ecgProbeSteps.clear()
+            ecgProbeCandidates.clear()
+            ecgProbePacketsSeen = 0
+            ecgProbeRawRecordsSeen = 0
+            ecgProbeRawRecordsWithSignal = 0
+            ecgProbeWindowOpen = false
+        }
+        ecgProbeRunToken++
+        ecgProbeRunStartMs = System.currentTimeMillis()
+        // ARMED-WAITING, not capturing yet: the deadline is the outer silence bound, and the
+        // verdict scheduled below fires on it unless the window opens first (which stands the
+        // outer down via the windowOpen flag and schedules its own). Twin of Swift beginEcgProbeRun.
+        ecgProbeDeadlineMs = System.currentTimeMillis() + ECG_PROBE_OUTER_WINDOW_MS
+        _ecgProbe.value = ECG_PROBE_ARMING
+        scheduleEcgProbeVerdict(ECG_PROBE_OUTER_WINDOW_MS, windowRun = false)
+    }
+
+    /**
+     * First waveform while armed: the capture window opens HERE. Re-arms the deadline to the
+     * capture window, flips the status from arming to capturing, and schedules the window's
+     * verdict. The time-gap writer banks into the same session (no explicit open needed —
+     * records before the window were dropped, so the session starts with signal).
+     * Idempotent per run.
+     */
+    private fun openEcgProbeWindow() {
+        if (ecgProbeWindowOpen) return
+        ecgProbeWindowOpen = true
+        ecgProbeDeadlineMs = System.currentTimeMillis() + ECG_PROBE_WINDOW_MS
+        _ecgProbe.value = ECG_PROBE_WAITING
+        log("ECG probe: first waveform — capture window open (30 s)")
+        scheduleEcgProbeVerdict(ECG_PROBE_WINDOW_MS, windowRun = true)
+    }
+
+    /**
+     * Render the verdict when a phase closes. `windowRun = false` is the outer arming verdict
+     * (fires unless the window opened first); `windowRun = true` is the capture verdict.
+     * Token-guarded: a re-tap supersedes. The reported seconds are the honest tap-to-verdict
+     * elapsed, not the nominal window.
+     */
+    private fun scheduleEcgProbeVerdict(afterMs: Long, windowRun: Boolean) {
+        val token = ecgProbeRunToken
+        handler.postDelayed({
+            if (ecgProbeRunToken != token) return@postDelayed
+            if (!windowRun && ecgProbeWindowOpen) return@postDelayed
+            ecgProbeDeadlineMs = 0L
+            val elapsedSec = maxOf(1, ((System.currentTimeMillis() - ecgProbeRunStartMs) / 1000).toInt())
+            val text = Whoop5EcgProbe.report(
+                ecgProbeSteps, ecgProbePacketsSeen, ecgProbeCandidates, elapsedSec,
+            ) + ecgRawChannelSection(elapsedSec)
+            log("ECG probe:\n$text")
+            _ecgProbe.value = text
+            // Auto-stop: a turn-on run leaves generation + both streams ON. The verdict is rendered,
+            // so restore the pre-run state now — reportsResult=false sends no second verdict, and the
+            // time-gap writer banks residuals into the same session, never a new one. Guarded on the
+            // running flag so Stop runs don't re-fire; a dropped link declines in the gates and the
+            // running state honestly survives.
+            if (_ecgCaptureRunning.value) ecgStopCapture(reportsResult = false)
+        }, afterMs)
+    }
+
+    /**
+     * Observation-only appendix: type-43 raw-channel activity during the window. Twin of Swift
+     * `BLEManager.ecgRawChannelSection` — same wording so shared strap logs read identically.
+     * Deliberately NOT part of the shared `Whoop5EcgProbe.report`, so the verdict inputs keep
+     * their cross-platform meaning.
+     */
+    internal fun ecgRawChannelSection(windowSeconds: Int = (ECG_PROBE_WINDOW_MS / 1000).toInt()): String {
+        val sb = StringBuilder("\nType-43 raw channel in ${windowSeconds}s: ")
+        if (ecgProbeRawRecordsSeen == 0) {
+            sb.append("0 records — the multiplexed raw pump emitted nothing during the window (off, or never started).\n")
+        } else {
+            sb.append("$ecgProbeRawRecordsSeen records, $ecgProbeRawRecordsWithSignal with waveform ")
+            sb.append("(more than ${Whoop5Ecg.RAW_BODY_ACTIVE_NONZERO_BYTES} nonzero body bytes).\n")
+        }
+        sb.append("Type-43 (REALTIME_RAW_DATA) is a multiplexed raw carrier, not an ECG identification: ")
+        sb.append("waveform-present means the raw pump is running; flat means it is off or the electrode ")
+        sb.append("circuit is open. Read alongside the verdict above, not instead of it.\n")
+        return sb.toString()
+    }
+
+    /**
+     * Fold one inbound 5/MG frame into the running probe: either it is a COMMAND_RESPONSE for one of
+     * our four opcodes (which settles that step's outcome), or it is a candidate ECG data packet.
+     * Called only while a run is armed, and only for live frames (never offload replays).
+     */
+    private fun noteEcgProbeFrame(frame: ByteArray, crcOk: Boolean) {
+        // CRC GATE FIRST: no byte of an unverified frame is read here, on either branch.
+        if (!crcOk) return
+        // Both COMMAND_RESPONSE spellings: 0x24 and the puffin alias 38.
+        val type = if (frame.size > 8) frame[8].toInt() and 0xFF else -1
+        val isCommandResponse = frame.size > 10 && (type == 0x24 || type == 38)
+        if (!isCommandResponse) {
+            noteEcgProbeCandidate(frame)
+            return
+        }
+        val respCmd = frame[10].toInt() and 0xFF
+        val ecgOps = setOf(
+            Whoop5Ecg.SELECT_WRIST_CMD,
+            Whoop5Ecg.MAIN_CONTROL_ECG_DATA_GENERATION_CMD,
+            Whoop5Ecg.TOGGLE_SAVE_RAW_ECG_CMD,
+            Whoop5Ecg.TOGGLE_REALTIME_FILTERED_ECG_CMD,
+        )
+        if (respCmd !in ecgOps) {
+            noteEcgProbeCandidate(frame)
+            return
+        }
+        val label = "${CommandNames.byRaw[respCmd] ?: "CMD"}($respCmd)"
+        val outcome = Whoop5EcgProbe.outcome(frame) ?: Whoop5EcgProbe.CommandOutcome.NoReply
+        val replyHex = frame.toHex()
+        // Settle the FIRST step still awaiting a reply for this command, so a start-then-stop pair
+        // keeps its two outcomes distinct. The send-time flag carries across: the reply echoes
+        // neither opcode argument, so re-deriving it here is impossible.
+        val idx = ecgProbeSteps.indexOfFirst {
+            it.label == label && it.outcome is Whoop5EcgProbe.CommandOutcome.NoReply
+        }
+        if (idx >= 0) {
+            val keep = ecgProbeSteps[idx].requestsRealtimeData
+            ecgProbeSteps[idx] = Whoop5EcgProbe.Step(label, outcome, keep, replyHex)
+            log("ECG probe: ← $label ${outcome.token}")
+        } else if (ecgProbeSteps.size < ECG_PROBE_MAX_STEPS) {
+            // An UNSOLICITED reply for one of our opcodes. Recorded but capped; requestsRealtimeData
+            // is false — nothing here sent it, and an unknown must never unlock a block verdict.
+            ecgProbeSteps.add(Whoop5EcgProbe.Step(label, outcome, false, replyHex))
+            log("ECG probe: ← $label ${outcome.token} (unsolicited)")
+        }
+    }
+
+    /**
+     * Structural triage for the packet TYPE the ECG records arrive under, which no table holds.
+     * A hit is a CANDIDATE, never a confirmed mapping. The classifier byte is logged as a NUMBER,
+     * never as its token name: a strap log is shareable, and no line in it should read like a
+     * clinical finding.
+     */
+    private fun noteEcgProbeCandidate(frame: ByteArray) {
+        if (frame.size < 12 || !Whoop5Ecg.plausibleFilteredFrame(frame)) return
+        ecgProbePacketsSeen++
+        if (ecgProbeCandidates.size >= ECG_PROBE_MAX_CANDIDATES) return
+        val packet = Whoop5Ecg.decodeFilteredFrame(frame) ?: return
+        val header = packet.header
+        // The frame-level triage already proved the shape, so decodeFilteredFrame failing here
+        // (it re-checks the sample count against the buffer) just means no detail line.
+        val line = "type=0x%02x len=%d samples=%d quality=%d leadsOn=%d hr=%d hrv=%d ".format(
+            frame[8].toInt() and 0xFF, frame.size, header.numberOfECGSamples,
+            header.signalQualityRaw, if (header.heartKeyLeadsAreOn) 1 else 0,
+            header.heartKeyHR, header.heartKeyHRV,
+        ) + "classifierRaw=${header.heartKeyArrhythmiaCheckResultRaw} " +
+            "statusRaw=${header.heartKeyArrhythmiaCheckStatusRaw} " +
+            "(unvalidated instrumentation, not a diagnosis)"
+        ecgProbeCandidates.add(line)
+        log("ECG probe: candidate packet $line")
+    }
 
     /**
      * Persist one CRC-valid MG type-43 record for the ECG page. READ-ONLY toward the strap: this observes
@@ -8235,6 +8524,21 @@ class WhoopBleClient(
             ?: return
         val samples = Whoop5Ecg.realtimeRawSamples(frame) ?: return
         val signalPresent = Whoop5Ecg.realtimeRawSignalPresent(frame) ?: false
+        // Verdict input: the raw-channel observation for the report appendix. Counts only (the store
+        // path below banks the bytes); never folded into the filtered-candidate count, so the shared
+        // verdict keeps its meaning on both platforms — twin of Apple's ecgProbeRawRecordsSeen pair.
+        if (ecgProbeArmed) {
+            ecgProbeRawRecordsSeen++
+            if (signalPresent) ecgProbeRawRecordsWithSignal++
+        }
+        // Signal-armed window (twin of Apple's openEcgProbeWindow): while a probe run is
+        // armed-waiting, pre-signal flats are counted above but never banked — the first
+        // waveform opens the window, so a stored session starts with signal. Outside probe
+        // runs the writer banks everything, preserving passive time-gap sessions.
+        if (ecgProbeArmed && !ecgProbeWindowOpen) {
+            if (signalPresent) openEcgProbeWindow()
+            return
+        }
         val hrBpm = _state.value.heartRate?.takeIf { it in 30..220 }
         val device = deviceId
         val firmware = _state.value.strapFirmware

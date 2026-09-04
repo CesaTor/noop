@@ -60,11 +60,89 @@ class EcgSessionSummaryTest {
         assertNull(s.maxHr)
     }
 
+
+    // MARK: - estimateBpm (same fixtures as the Swift twin)
+
+    private fun spikeTrain(period: Int, peaks: Int, amp: Int = 1000): List<Int> {
+        val s = MutableList(period * peaks + 10) { 0 }
+        for (k in 0 until peaks) s[k * period + 5] = amp
+        return s
+    }
+
+    @Test
+    fun clean60bpmTrain() {
+        val est = EcgSessionSummary.estimateBpm(spikeTrain(period = 100, peaks = 6), 100.0)
+        assertEquals(6, est.beats)
+        assertEquals(60, est.bpm)
+    }
+
+    @Test
+    fun clean90bpmTrain() {
+        val est = EcgSessionSummary.estimateBpm(spikeTrain(period = 67, peaks = 8), 100.0)
+        assertEquals(90, est.bpm)
+    }
+
+    @Test
+    fun flatIsUnreadable() {
+        assertEquals(
+            EcgSessionSummary.BeatEstimate(null, 0),
+            EcgSessionSummary.estimateBpm(List(500) { 0 }, 100.0),
+        )
+        assertNull(EcgSessionSummary.estimateBpm(List(500) { 7 }, 100.0).bpm)
+    }
+
+    @Test
+    fun tooFewBeatsIsUnreadable() {
+        val est = EcgSessionSummary.estimateBpm(spikeTrain(period = 100, peaks = 2), 100.0)
+        assertNull(est.bpm)
+        assertEquals(2, est.beats)
+    }
+
+    @Test
+    fun implausiblySlowIsRejected() {
+        val est = EcgSessionSummary.estimateBpm(spikeTrain(period = 300, peaks = 4), 100.0)
+        assertNull(est.bpm)
+        assertEquals(4, est.beats)
+    }
+
+    @Test
+    fun emptyAndDegenerate() {
+        assertNull(EcgSessionSummary.estimateBpm(emptyList(), 100.0).bpm)
+        assertNull(EcgSessionSummary.estimateBpm(listOf(1, 2), 100.0).bpm)
+        assertNull(EcgSessionSummary.estimateBpm(spikeTrain(period = 100, peaks = 6), 0.0).bpm)
+    }
     @Test
     fun singleRecordHasNoSpan() {
         val s = EcgSessionSummary.summarize(listOf(rec(1000, hr = 70)))
         assertEquals(0L, s.durationSec)
         assertEquals(0.0, s.recordsPerSec, 0.0)
         assertEquals(70, s.medianHr)
+    }
+
+    // MARK: - agreedWaveBpm (same fixtures as the Swift twin)
+
+    @Test
+    fun agreementShows() {
+        assertEquals(
+            65,
+            EcgSessionSummary.agreedWaveBpm(63, EcgSessionSummary.BeatEstimate(65, 28)),
+        )
+        assertEquals(
+            70,
+            EcgSessionSummary.agreedWaveBpm(60, EcgSessionSummary.BeatEstimate(70, 28)),
+        )
+    }
+
+    @Test
+    fun disagreementHides() {
+        assertNull(
+            EcgSessionSummary.agreedWaveBpm(67, EcgSessionSummary.BeatEstimate(98, 40)),
+        )
+        assertNull(
+            EcgSessionSummary.agreedWaveBpm(67, EcgSessionSummary.BeatEstimate(null, 2)),
+        )
+        assertNull(
+            EcgSessionSummary.agreedWaveBpm(null, EcgSessionSummary.BeatEstimate(65, 28)),
+        )
     }
 }

@@ -2694,6 +2694,15 @@
     <string name="l10n_ecg_screen_records_value">%1$d</string>
     <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
     <string name="l10n_ecg_screen_firmware_unknown">desconocida</string>
+    <string name="l10n_ecg_screen_start_capture">Iniciar captura de ECG</string>
+    <string name="l10n_ecg_screen_stop_capture">Detener captura de ECG</string>
+    <string name="l10n_ecg_screen_confirm_body">Pide a tu MG que inicie su subsistema de ECG y registra lo que devuelve. No es una medición médica ni un diagnóstico. Mantén ambas muescas del cierre durante toda la ventana.</string>
+    <string name="l10n_ecg_screen_blocked_offline">Sin conexión. Abre Live para vincular.</string>
+    <string name="l10n_ecg_screen_blocked_variant">Esperando a que tu banda se identifique como WHOOP MG.</string>
+    <string name="l10n_ecg_screen_blocked_bond">Necesita el enlace cifrado: vincula primero la banda.</string>
+    <string name="l10n_ecg_screen_running">Captura en curso: sigue sujetando el cierre.</string>
+    <string name="l10n_ecg_screen_arming">Esperando la primera forma de onda — mantén sujetado el cierre.</string>
+    <string name="l10n_ecg_screen_cancel">Cancelar</string>
     <string name="l10n_ecg_screen_strip_description">Trazo de ECG</string>
     <string name="l10n_health_screen_ecg">ECG</string>
 </resources>

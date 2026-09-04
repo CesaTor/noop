@@ -2693,6 +2693,15 @@
     <string name="l10n_ecg_screen_records_value">%1$d</string>
     <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
     <string name="l10n_ecg_screen_firmware_unknown">inconnue</string>
+    <string name="l10n_ecg_screen_start_capture">Démarrer la capture ECG</string>
+    <string name="l10n_ecg_screen_stop_capture">Arrêter la capture ECG</string>
+    <string name="l10n_ecg_screen_confirm_body">Demande à votre MG de démarrer son sous-système ECG et consigne ce qui revient. Pas une mesure médicale ni un diagnostic. Maintenez les deux encoches du fermoir pendant toute la fenêtre.</string>
+    <string name="l10n_ecg_screen_blocked_offline">Non connecté. Ouvrez Live pour appairer.</string>
+    <string name="l10n_ecg_screen_blocked_variant">En attente que votre bracelet s\'identifie comme WHOOP MG.</string>
+    <string name="l10n_ecg_screen_blocked_bond">Nécessite la liaison chiffrée — appairez d\'abord le bracelet.</string>
+    <string name="l10n_ecg_screen_running">Capture en cours — continuez à tenir le fermoir.</string>
+    <string name="l10n_ecg_screen_arming">En attente de la première forme d\'onde — maintenez le fermoir.</string>
+    <string name="l10n_ecg_screen_cancel">Annuler</string>
     <string name="l10n_ecg_screen_strip_description">Tracé ECG</string>
     <string name="l10n_health_screen_ecg">ECG</string>
 </resources>

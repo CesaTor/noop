@@ -882,11 +882,15 @@ private fun MoreScreen(onNavigate: (String) -> Unit) {
                     },
                 )
                 if (isOpen) {
+                    // MG ECG page: the drawer entry renders only while the listen opt-in is on
+                    // (same key the Health row and the macOS sidebar read). Default off everywhere.
+                    val ecgListen = rememberEcgListen()
+                    val visible = group.items.filter { it != Destination.Ecg || ecgListen }
                     NoopCard(padding = 0.dp) {
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            group.items.forEachIndexed { i, dest ->
+                            visible.forEachIndexed { i, dest ->
                                 MoreRow(dest = dest, onClick = { onNavigate(dest.route) })
-                                if (i < group.items.lastIndex) {
+                                if (i < visible.lastIndex) {
                                     HorizontalDivider(
                                         color = Palette.hairline,
                                         modifier = Modifier.padding(start = 50.dp),
