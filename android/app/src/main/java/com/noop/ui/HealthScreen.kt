@@ -29,6 +29,8 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import android.widget.Toast
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,6 +87,7 @@ import com.noop.analytics.FitnessReadinessStatus
 import com.noop.analytics.SkinTempDisplay
 import com.noop.analytics.VitalBands
 import com.noop.ble.LiveState
+import com.noop.ble.PuffinExperiment
 import com.noop.data.DailyMetric
 import com.noop.data.Vo2MaxEstimator
 import java.time.Instant
@@ -116,6 +119,7 @@ fun HealthScreen(
     onVitalClick: (String) -> Unit = {},
     onOpenLabBook: () -> Unit = {},
     onOpenFusedRecord: () -> Unit = {},
+    onOpenEcg: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -131,6 +135,22 @@ fun HealthScreen(
     val periodStarts by vm.periodStarts.collectAsStateWithLifecycle()
     var showCycleTracker by remember { mutableStateOf(false) }
     val hrMax = profile.hrMax
+    // MG ECG page entry (experimental listen opt-in, default off): SharedPreferences isn't reactive,
+    // so watch the experiments file and re-read the flag on change (the SettingsScreen rev idiom).
+    var ecgListenRev by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val expPrefs = context.getSharedPreferences(PuffinExperiment.PREFS, Context.MODE_PRIVATE)
+        // Strong local for the effect's lifetime: Android holds these listeners WEAKLY, so one that is
+        // only referenced by the register call gets collected and silently stops firing.
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == PuffinExperiment.KEY_WHOOP5_ECG) ecgListenRev++
+        }
+        expPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { expPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    val ecgListen = remember(ecgListenRev) {
+        PuffinExperiment.from(context.applicationContext).ecgListen
+    }
 
     // Health Monitor shows live HR too, so it must keep the realtime stream on while it's visible —
     // otherwise leaving the Live page stopped the stream and this page froze (issue #18). Ref-counted
@@ -240,6 +260,8 @@ fun HealthScreen(
                 RecordsAndSourcesSection(
                     onOpenLabBook = onOpenLabBook,
                     onOpenFusedRecord = onOpenFusedRecord,
+                    showEcg = ecgListen,
+                    onOpenEcg = onOpenEcg,
                 )
             }
         }
@@ -379,11 +401,12 @@ private fun syncHelperText(live: LiveState): String = when {
 // Fused"). Both live entirely on this phone, so the overline says so. Plain navigation rows in the
 // house NoopCard style with an icon, a title/subtitle and a trailing chevron, each carrying a single
 // combined contentDescription for screen readers.
-
 @Composable
 private fun RecordsAndSourcesSection(
     onOpenLabBook: () -> Unit,
     onOpenFusedRecord: () -> Unit,
+    showEcg: Boolean = false,
+    onOpenEcg: () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Records & sources", overline = "On this phone")
@@ -401,6 +424,17 @@ private fun RecordsAndSourcesSection(
             subtitle = "The best-sourced number per metric, across your bands.",
             onClick = onOpenFusedRecord,
         )
+        // MG ECG captures (experimental listen opt-in, default off): stored waveform sessions from
+        // your MG, descriptive readings only. Hidden entirely while the opt-in is off.
+        if (showEcg) {
+            RecordRow(
+                icon = Icons.Filled.MonitorHeart,
+                tint = Palette.metricRose,
+                title = uiString(R.string.l10n_health_screen_ecg),
+                subtitle = uiString(R.string.l10n_ecg_screen_subtitle),
+                onClick = onOpenEcg,
+            )
+        }
     }
 }
 

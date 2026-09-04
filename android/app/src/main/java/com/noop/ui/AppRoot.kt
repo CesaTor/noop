@@ -167,6 +167,10 @@ private enum class Destination(
     LabBook("lab_book", R.string.nav_lab_book, Icons.Filled.HealthAndSafety),
     Rhythm("rhythm", R.string.nav_rhythm, Icons.Filled.MonitorHeart),
     AppleHealth("apple_health", R.string.nav_apple_health, Icons.Filled.HealthAndSafety),
+    // MG ECG captures (experimental listen-only opt-in, default off): stored type-43 waveform
+    // sessions with descriptive readings only. The Health entry row gates on the opt-in; the Body
+    // drawer item stays visible so the destination is reachable once enabled.
+    Ecg("ecg", R.string.nav_ecg, Icons.Filled.MonitorHeart),
 
     // Group: System
     Automations("automations", R.string.nav_automations, Icons.Filled.Bolt),
@@ -235,7 +239,7 @@ private val drawerGroups: List<DrawerGroup> = listOf(
     DrawerGroup("Body", R.string.more_group_body, listOf(
         Destination.Live, Destination.Workouts, Destination.Health, Destination.VitalSigns,
         Destination.LabBook, Destination.Stress, Destination.Breathe, Destination.Intervals,
-        Destination.Rhythm,
+        Destination.Rhythm, Destination.Ecg,
     ), defaultExpanded = true),
     DrawerGroup("Data", R.string.more_group_data, listOf(
         Destination.FusedRecord, Destination.AppleHealth, Destination.DataSources,
@@ -589,6 +593,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         onVitalClick = { nav.navigate("vital_detail/$it") },
                         onOpenLabBook = { nav.navigateTopLevel(Destination.LabBook.route) },
                         onOpenFusedRecord = { nav.navigateTopLevel(Destination.FusedRecord.route) },
+                        onOpenEcg = { nav.navigateTopLevel(Destination.Ecg.route) },
                         onOpenSettings = { nav.navigateTopLevel(Destination.Settings.route) },
                     )
                 }
@@ -607,13 +612,14 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                 }
                 // --- v5 pillar screens (Wave 3 wiring) ---
                 composable(Destination.InsightsHub.route) { InsightsHubScreen(viewModel) }
-                composable(Destination.LabBook.route) { LabBookScreen(viewModel) }
                 composable(Destination.Rhythm.route) {
                     // EXPERIMENTAL: self-gates on its own consent clickwrap (default OFF). The night
                     // summary + per-window Poincaré results land with the rhythm capture pipeline; until
                     // then it renders its honest "no clear reading yet" empty state behind the gate.
                     RhythmScreen(night = null, windows = emptyList())
                 }
+                composable(Destination.LabBook.route) { LabBookScreen(viewModel) }
+                composable(Destination.Ecg.route) { EcgScreen(vm = viewModel) }
                 composable(Destination.FusedRecord.route) { FusedRecordRoute(viewModel) }
                 composable(Destination.AppleHealth.route) { AppleHealthScreen(viewModel) }
                 composable(Destination.Devices.route) {

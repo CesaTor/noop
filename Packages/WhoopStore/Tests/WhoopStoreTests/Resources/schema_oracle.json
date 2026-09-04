@@ -1,6 +1,6 @@
 {
   "_readme": "SHARED Room<->GRDB SCHEMA ORACLE (#775). Two byte-identical copies: Packages/WhoopStore/Tests/WhoopStoreTests/Resources/schema_oracle.json and android/app/src/test/resources/schema_oracle.json. SchemaOracleTests.swift compares GRDB's PRAGMA table_info/index_list against it; SchemaOracleTest.kt compares Room's exported schema JSON against it. `columns` is the iOS/GRDB shape in GRDB column order (macOS is the reference implementation); every way Android differs is spelled out in an `android` / `iosAbsent` / `androidColumnOrder` override naming a key in `divergenceReasons`. Adding a column, reordering one, or changing a type/nullability on one platform only fails both suites until it is either fixed or written down here.",
-  "roomVersion": 35,
+  "roomVersion": 36,
   "grdbMigrations": [
     "v1",
     "v2",
@@ -42,7 +42,8 @@
     "v38-apple-step-hour",
     "v39-ppg-burst-index",
     "v40-daily-skin-temp-absolute",
-    "v41-drop-raw-imu-sample"
+    "v41-drop-raw-imu-sample",
+    "v42-ecg-waveform"
   ],
   "divergenceReasons": {
     "android-orphan-synced-column": "REAL COLUMN DRIFT: `synced` exists on Android only. GRDB's v10 note is explicit that stepSample gets no `synced` column ('unused; see StreamStore'), and v12's ppgHrSample never had one either; the Room entities copied the flag from the older per-second entities. Nothing reads it on Android — the per-row upload flag belongs to an upload path that does not exist there — so it is dead width, not divergent data. Removing it needs a Room table rebuild.",
@@ -1797,6 +1798,109 @@
         "deviceId",
         "startTs",
         "sport"
+      ],
+      "indices": []
+    },
+    "ecgSession": {
+      "platform": "both",
+      "columns": [
+        {
+          "name": "id",
+          "affinity": "TEXT",
+          "notNull": false,
+          "default": null,
+          "android": {
+            "notNull": true
+          },
+          "divergence": "sqlite-text-pk-nullable"
+        },
+        {
+          "name": "deviceId",
+          "affinity": "TEXT",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "startedAtMs",
+          "affinity": "INTEGER",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "firmware",
+          "affinity": "TEXT",
+          "notNull": false,
+          "default": null
+        },
+        {
+          "name": "variant",
+          "affinity": "TEXT",
+          "notNull": false,
+          "default": null
+        }
+      ],
+      "primaryKey": [
+        "id"
+      ],
+      "indices": []
+    },
+    "ecgWaveformSample": {
+      "platform": "both",
+      "columns": [
+        {
+          "name": "sessionId",
+          "affinity": "TEXT",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "seq",
+          "affinity": "INTEGER",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "deviceId",
+          "affinity": "TEXT",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "tsMs",
+          "affinity": "INTEGER",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "hrBpm",
+          "affinity": "INTEGER",
+          "notNull": false,
+          "default": null
+        },
+        {
+          "name": "samples",
+          "affinity": "BLOB",
+          "notNull": true,
+          "default": null
+        },
+        {
+          "name": "signalPresent",
+          "affinity": "NUMERIC",
+          "notNull": true,
+          "default": null,
+          "android": {
+            "affinity": "INTEGER",
+            "default": null
+          },
+          "divergence": [
+            "room-omits-sql-default",
+            "grdb-boolean-affinity"
+          ]
+        }
+      ],
+      "primaryKey": [
+        "sessionId",
+        "seq"
       ],
       "indices": []
     }

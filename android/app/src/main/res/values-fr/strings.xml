@@ -1600,6 +1600,7 @@
     <string name="nav_vital_signs">Signes vitaux</string>
     <string name="nav_lab_book">Carnet de laboratoire</string>
     <string name="nav_rhythm">Rythme</string>
+    <string name="nav_ecg">ECG</string>
     <string name="nav_apple_health">Apple Santé</string>
     <string name="nav_automations">Automatisations</string>
     <string name="nav_alarms">Alarmes</string>
@@ -1971,6 +1972,8 @@
     <string name="l10n_settings_screen_ecg_gate_persistent_warning">Ceci écrit un réglage qui RESTE SUR VOTRE BRACELET jusqu\'à ce que vous le remettiez — ce n\'est pas une préférence de l\'app, et fermer NOOP ne l\'annule pas. « Désactiver le verrou » réécrit « 0 » en une seule touche. Seule cette clé est écrite ; les six autres que votre bracelet a énumérées ne sont jamais touchées.</string>
     <string name="l10n_settings_screen_ecg_gate_turn_on">Activer le verrou (écrire « 1 »)</string>
     <string name="l10n_settings_screen_ecg_gate_turn_off">Désactiver le verrou (écrire « 0 »)</string>
+    <string name="l10n_settings_screen_ecg_listen_title">Capture de la forme d\'onde ECG (WHOOP MG uniquement)</string>
+    <string name="l10n_settings_screen_ecg_listen_blurb">Stocke les enregistrements de forme d\'onde de type 43 du bracelet sur cet appareil pour l\'écran ECG. Écoute uniquement : rien n\'est écrit sur le bracelet. MG uniquement, désactivé par défaut.</string>
     <string name="l10n_settings_screen_accent">Accent</string>
     <string name="l10n_settings_screen_preset">Préréglage</string>
     <string name="settings_language">Langue</string>
@@ -2669,4 +2672,27 @@
     <string name="l10n_settings_screen_skin_temperature_fc103030">Température cutanée</string>
     <string name="l10n_health_screen_no_measured_temperature_for_these_nights_showing_the_differe_69d4efae">Aucune température mesurée pour ces nuits — l\'écart par rapport à votre référence est affiché. Une synchronisation réévalue les nuits récentes et le complète.</string>
     <string name="l10n_health_screen_only_nights_with_a_measured_temperature_are_shown_the_others_b6f7c45b">Seules les nuits avec une température mesurée sont affichées ; les autres n\'ont enregistré qu\'un écart par rapport à la référence.</string>
+    <!-- MG ECG page (experimental listen-only capture): descriptive readings only, never clinical. -->
+    <string name="l10n_ecg_screen_title">ECG</string>
+    <string name="l10n_ecg_screen_subtitle">Captures expérimentales de la forme d’onde de votre MG.</string>
+    <string name="l10n_ecg_screen_framing_title">Instrument non validé</string>
+    <string name="l10n_ecg_screen_framing_body">NOOP n’est pas un dispositif médical et ceci n’est pas un test ECG. Ces enregistrements sont affichés tels qu’ils ont été stockés : ce ne sont ni une mesure, ni un diagnostic, et ils ne peuvent détecter aucune affection cardiaque. Ne les utilisez jamais pour prendre une décision de santé. En cas de symptômes ou d’inquiétude pour votre cœur, consultez un médecin.</string>
+    <string name="l10n_ecg_screen_empty_title">Aucune capture ECG pour le moment</string>
+    <string name="l10n_ecg_screen_empty_body">Pour capturer : ouvrez Appareils, lancez une capture ECG sur votre MG, puis maintenez les deux encoches du fermoir avec les doigts de l’autre main pendant environ 30 secondes.</string>
+    <string name="l10n_ecg_screen_sessions">Séances</string>
+    <string name="l10n_ecg_screen_session_meta">%1$d enregistrements · %2$d%% de signal · FC médiane %3$s</string>
+    <string name="l10n_ecg_screen_median_hr">%1$d bpm</string>
+    <string name="l10n_ecg_screen_no_hr">—</string>
+    <string name="l10n_ecg_screen_stat_duration">Durée</string>
+    <string name="l10n_ecg_screen_stat_coverage">Signal</string>
+    <string name="l10n_ecg_screen_stat_median_hr">FC médiane</string>
+    <string name="l10n_ecg_screen_stat_records">Enregistrements</string>
+    <string name="l10n_ecg_screen_hr_range">%1$d–%2$d bpm</string>
+    <string name="l10n_ecg_screen_duration_value">%1$d s</string>
+    <string name="l10n_ecg_screen_coverage_value">%1$d%%</string>
+    <string name="l10n_ecg_screen_records_value">%1$d</string>
+    <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
+    <string name="l10n_ecg_screen_firmware_unknown">inconnue</string>
+    <string name="l10n_ecg_screen_strip_description">Tracé ECG</string>
+    <string name="l10n_health_screen_ecg">ECG</string>
 </resources>

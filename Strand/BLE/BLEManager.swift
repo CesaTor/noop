@@ -1023,6 +1023,12 @@ public final class BLEManager: NSObject, ObservableObject {
     /// `ecgProbePacketsSeen`, so the shared verdict keeps its meaning on both platforms.
     private var ecgProbeRawRecordsSeen = 0
     private var ecgProbeRawRecordsWithSignal = 0
+    /// Durable-capture session id for this probe run ("ecg-<startTsMs>"), opened in
+    /// `beginEcgProbeRun` so the banked type-43 rows have a session to belong to. Nil when no
+    /// run has opened one yet this process.
+    private var ecgProbeSessionId: String?
+    /// Session-scoped record index for the banked rows (PK tiebreak alongside tsMs). Reset per run.
+    private var ecgProbeWaveSeq = 0
     /// Non-nil while the listen window is open; drives `ecgProbeArmed`.
     private var ecgProbeDeadline: Date?
     /// Supersedes a previous run's pending verdict timer when the user taps again.
@@ -4073,7 +4079,7 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         ecgStopOverride = true
         defer { ecgStopOverride = false }
-        if reportsResult { beginEcgProbeRun(clearingSteps: true) } else { ecgProbeSteps = [] }
+        if reportsResult { beginEcgProbeRun(clearingSteps: true, openSession: false) } else { ecgProbeSteps = [] }
         log("ECG probe: stopping ECG data generation and both streams")
         sendEcgCommand(.toggleLabradorDataGeneration, arg: Whoop5Ecg.ControlSignal.stop.rawValue)
         sendEcgCommand(.toggleLabradorRawSave, arg: 0)
@@ -4085,15 +4091,32 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Clear the probe result (dialog dismissed).
     public func clearEcgProbe() { state.ecgProbe = nil }
 
-    private func beginEcgProbeRun(clearingSteps: Bool) {
+    private func beginEcgProbeRun(clearingSteps: Bool, openSession: Bool = true) {
         if clearingSteps {
             ecgProbeSteps = []
             ecgProbeCandidates = []
             ecgProbePacketsSeen = 0
             ecgProbeRawRecordsSeen = 0
             ecgProbeRawRecordsWithSignal = 0
+            ecgProbeWaveSeq = 0
         }
         ecgProbeRunToken &+= 1
+        // Durable capture: one session row per probe run, so the ECG page can read the run back.
+        // Skipped for the Stop path (openSession: false): the OFF sequence ends a capture rather
+        // than starting one, and banking an empty session per Stop is what littered the page.
+        // Fire-and-forget through the Collector (which owns the store) — a missing store or a
+        // throw banks nothing and never touches the probe verdict or the BLE path. Already gated:
+        // every caller passed the bonded-MG + opt-in gates before opening a run.
+        if openSession {
+            let startedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+            let session = EcgWaveformSession(id: EcgWaveformSession.makeId(startTsMs: startedAtMs),
+                                             startedAtMs: startedAtMs,
+                                             firmware: state.strapFirmware ?? disFirmware,
+                                             variantLabel: whoop5Variant.label)
+            ecgProbeSessionId = session.id
+            let sessionDeviceId = deviceId
+            Task { @MainActor in await collector?.openEcgSession(session, deviceId: sessionDeviceId) }
+        }
         ecgProbeDeadline = Date().addingTimeInterval(BLEManager.ecgProbeWindow)
         state.ecgProbe = BLEManager.ecgProbeWaiting
     }
@@ -4114,6 +4137,13 @@ public final class BLEManager: NSObject, ObservableObject {
                                               windowSeconds: Int(BLEManager.ecgProbeWindow))
             self.log("ECG probe:\n\(text)")
             self.state.ecgProbe = text
+            // Auto-stop: a turn-on run leaves generation + both streams ON (battery + BLE airtime
+            // indefinitely). The verdict is rendered, so restore the pre-run state now — the OFF
+            // sequence with reportsResult:false sends no second verdict and opens no session.
+            // Guarded on ecgMayBeRunning so Stop/wrist runs (which never started anything, or already
+            // stopped it) don't re-fire. If the link dropped, the gates decline and the running state
+            // — and its Stop control — honestly survives.
+            if self.ecgMayBeRunning { self.ecgStopCapture(reportsResult: false) }
         }
     }
 
@@ -4232,6 +4262,18 @@ public final class BLEManager: NSObject, ObservableObject {
               let present = Whoop5Ecg.realtimeRawSignalPresent(frame) else { return }
         ecgProbeRawRecordsSeen += 1
         if present { ecgProbeRawRecordsWithSignal += 1 }
+        // Durable capture for the ECG page: bank the record verbatim beside the counting above.
+        // Fire-and-forget (async store API, no UI coupling, never throws into the BLE path).
+        // `hrBpm` stamps the current live standard HR; nil means unstamped, never a fabricated number.
+        guard let sessionId = ecgProbeSessionId else { return }
+        let row = EcgWaveformSample(seq: ecgProbeWaveSeq,
+                                    tsMs: Int(Date().timeIntervalSince1970 * 1000),
+                                    hrBpm: state.heartRate,
+                                    samples: Whoop5Ecg.realtimeRawSamples(frame)!,
+                                    signalPresent: present)
+        ecgProbeWaveSeq += 1
+        let rowDeviceId = deviceId
+        Task { @MainActor in await collector?.insertEcgWaveform(row, sessionId: sessionId, deviceId: rowDeviceId) }
     }
 
     /// Observation-only appendix for the probe report: type-43 raw-channel activity during the window.

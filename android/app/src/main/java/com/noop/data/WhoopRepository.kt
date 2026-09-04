@@ -304,6 +304,21 @@ data class PpgHrRow(val ts: Long, val bpm: Int, val conf: Double)
  */
 data class PpgWaveformRow(val ts: Long, val samples: List<Int>, val burstIndex: Int? = null)
 
+/**
+ * One persisted MG ECG type-43 record for the ECG page (v42): [seq] the session-scoped record index,
+ * [tsMs] wall-clock capture ms, [hrBpm] the live standard-HR stamped at capture time (null when none was
+ * streaming — never a fabricated number), [samples] the raw i16 counts (101 per record), [signalPresent]
+ * the stored byte-fill observation. deviceId + sessionId are attached on insert (see [EcgSessionEntity]
+ * / [EcgWaveformSampleEntity]); the samples pack via the shared [StreamPersistence.packPpgSamples].
+ */
+data class EcgWaveformRow(
+    val seq: Int,
+    val tsMs: Long,
+    val hrBpm: Int?,
+    val samples: List<Int>,
+    val signalPresent: Boolean,
+)
+
 /** Count of rows ACTUALLY inserted per stream (mirrors WhoopStore.insert return tuple). */
 data class InsertCounts(
     val hr: Int = 0,
@@ -1004,6 +1019,33 @@ class WhoopRepository(
         List<PpgWaveformRow> =
         dao.ppgWaveformSamples(deviceId, from, to, limit)
             .map { PpgWaveformRow(it.ts, StreamPersistence.unpackPpgSamples(it.samples)) }
+
+    // MARK: - MG ECG capture (v42 / MIGRATION_35_36)
+    //
+    // Thin suspend wrappers over the DAO: sessions newest-first, rows in capture order, samples
+    // unpacked from the shared i16-LE BLOB ([StreamPersistence.packPpgSamples]/[unpackPpgSamples] — the
+    // identical encoding the PPG waveform uses). The BLE listen writer persists through [openEcgSession]
+    // + [insertEcgWaveform] (IGNORE keeps a re-opened session / re-seen record idempotent); the ECG page
+    // reads through [ecgSessions] + [ecgWaveformSamples]. Kotlin twins of the Swift
+    // `WhoopStore.openEcgSession/insertEcgWaveform/ecgSessions/ecgWaveformSamples`.
+    /** Open one capture session (`ecg-<startTsMs>`). Idempotent by id. */
+    suspend fun openEcgSession(row: EcgSessionEntity) = dao.insertEcgSession(row)
+
+    /** Persist waveform rows for a session. Idempotent by (sessionId, seq). */
+    suspend fun insertEcgWaveform(rows: List<EcgWaveformSampleEntity>) = dao.insertEcgWaveform(rows)
+
+    /** One device's capture sessions, newest first. Empty when nothing was ever captured. */
+    suspend fun ecgSessions(deviceId: String): List<EcgSessionEntity> = dao.ecgSessions(deviceId)
+
+    /** One session's records in capture order, samples unpacked to raw i16 counts. */
+    suspend fun ecgWaveformSamples(sessionId: String): List<EcgWaveformRow> =
+        dao.ecgWaveformSamples(sessionId)
+            .map {
+                EcgWaveformRow(
+                    it.seq, it.tsMs, it.hrBpm,
+                    StreamPersistence.unpackPpgSamples(it.samples), it.signalPresent,
+                )
+            }
 
     /**
      * The banked 5/MG v18 auxiliary fields in [from, to] for one device, ascending by ts — one row per

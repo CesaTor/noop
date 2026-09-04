@@ -484,6 +484,20 @@ IT: dict[str, str] = {
     'Building, moves as you do': 'Creazione in corso, si muove con te',
     "After tonight's sleep": 'Dopo il sonno di stanotte',
     'Calibrating , %lld of %lld': 'Calibrazione, %lld di %lld',
+    'Captures': 'Acquisizioni',
+    'Experimental captures from your MG strap: unvalidated instrumentation, not a diagnosis. These describe what the strap recorded during a short capture run — duration, waveform coverage, and strap-stamped heart rate. They are not a medical measurement and cannot detect or rule out any condition. If you feel unwell, contact a qualified professional; in an emergency, your local emergency service.': 'Acquisizioni sperimentali della tua fascia MG: strumentazione non validata, non una diagnosi. Descrivono ciò che la fascia ha registrato durante una breve sessione di acquisizione: durata, copertura della forma d’onda e frequenza cardiaca marcata per battito. Non sono una misurazione medica e non possono rilevare né escludere alcuna condizione. Se non ti senti bene, contatta un professionista qualificato; in caso di emergenza, il tuo servizio di emergenza locale.',
+    'No ECG captures yet': 'Ancora nessuna acquisizione ECG',
+    'To capture: open Devices, choose your MG strap, start ECG capture, and hold the clasp for the whole 30-second window.': 'Per acquisire: apri Dispositivi, scegli la tua fascia MG, avvia l’acquisizione ECG e tieni premuta la fibbia per tutti i 30 secondi.',
+    'Loading capture…': 'Caricamento acquisizione…',
+    'This capture banked no waveform records — the raw pump emitted nothing during the window (off, or never started).': 'Questa acquisizione non ha salvato record di forma d’onda: la pompa di dati grezzi non ha emesso nulla durante la finestra (spenta o mai avviata).',
+    'Waiting for your strap to identify as a WHOOP MG.': 'In attesa che la fascia venga riconosciuta come WHOOP MG.',
+    'Turn on Test Centre → Connection to run captures.': 'Attiva Test Centre → Connessione per eseguire le acquisizioni.',
+    'Needs the encrypted bond — pair the strap first.': 'Serve il collegamento cifrato: associa prima la fascia.',
+    'Asks your MG to start its ECG subsystem and logs whatever comes back. Not a medical measurement or diagnosis. Hold both clasp indents for the whole window.': 'Chiede al tuo MG di avviare il suo sottosistema ECG e registra ciò che ritorna. Non una misurazione medica o una diagnosi. Tieni premute entrambe le scanalature della fibbia per l’intera finestra.',
+    'Capture running — keep holding the clasp.': 'Acquisizione in corso — continua a tenere la fibbia.',
+    'Delete capture': 'Elimina acquisizione',
+    'Delete this capture?': 'Eliminare questa acquisizione?',
+    'This removes the banked records for this capture. The strap is untouched.': 'Questo rimuove i record salvati di questa acquisizione. La fascia non viene toccata.',
 }
 
 

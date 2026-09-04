@@ -164,14 +164,19 @@ private struct DevicesContent: View {
                 // type-checker over its budget ("unable to type-check this expression in reasonable time").
                 let probeGate = device.status == .active && live.connected
                     && SourceCoordinator.isWhoop(device) && TestCentre.active(.connection)
-                // The ECG probe WRITES to the strap, so it carries two gates the read-only probes don't:
-                // the Experimental opt-in, and a strap that has positively attested itself a WHOOP MG
-                // (a plain 5.0 has no electrodes; `.unknown` is not MG).
+                // The ECG capture entry is a shipped feature, not a diagnostic probe: it deliberately
+                // does NOT ride `probeGate`'s Test Centre requirement (the Experimental opt-in + MG
+                // attestation + the send-path bond gate are the safety gates). The read-only probes
+                // below keep theirs. The entry WRITES to the strap, so it still carries the two gates
+                // the read-only probes don't: the Experimental opt-in, and a strap that has positively
+                // attested itself a WHOOP MG (a plain 5.0 has no electrodes; `.unknown` is not MG).
                 //
                 // `|| model.ecgMayBeRunning` keeps the entry — and therefore Stop — reachable after the
                 // opt-in has been switched off mid-session. Turning a feature off must not remove the
                 // only control that turns the STRAP off; the MG gate still applies either way.
-                let ecgGate = probeGate && (ecgEnabled || model.ecgMayBeRunning) && model.isWhoop5MG
+                let ecgGate = device.status == .active && live.connected
+                    && SourceCoordinator.isWhoop(device)
+                    && (ecgEnabled || model.ecgMayBeRunning) && model.isWhoop5MG
                 DeviceCard(
                     device: device,
                     isActive: device.status == .active,

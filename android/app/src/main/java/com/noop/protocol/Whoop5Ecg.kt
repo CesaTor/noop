@@ -420,6 +420,9 @@ object Whoop5Ecg {
     /** Non-zero body bytes above which a record is treated as carrying a waveform rather than baseline. */
     const val RAW_BODY_ACTIVE_NONZERO_BYTES = 20
 
+    /** Deterministic capture-session id. Twin of Swift `EcgWaveformSession.makeId`. */
+    fun sessionId(startTsMs: Long): String = "ecg-$startTsMs"
+
     /** True for a frame shaped like a REALTIME_RAW_DATA record. Shape only — says nothing about CRC. */
     fun isRealtimeRawRecord(frame: ByteArray): Boolean =
         frame.size == RAW_RECORD_LENGTH &&

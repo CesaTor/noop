@@ -35,6 +35,7 @@
     <string name="nav_vital_signs">Sinais vitais</string>
     <string name="nav_lab_book">Caderno de laboratório</string>
     <string name="nav_rhythm">Ritmo</string>
+    <string name="nav_ecg">ECG</string>
     <string name="nav_apple_health">Apple Health</string>
     <string name="nav_automations">Automatizações</string>
     <string name="nav_alarms">Alarmes</string>
@@ -1946,6 +1947,8 @@
     <string name="l10n_settings_screen_ecg_gate_persistent_warning">Isto escreve uma definição que FICA NA SUA PULSEIRA até a repor — não é uma preferência da aplicação e fechar o NOOP não a desfaz. «Desativar bloqueio» volta a escrever \'0\' com um só toque. Só esta chave é escrita; as outras seis que a sua pulseira listou nunca são tocadas.</string>
     <string name="l10n_settings_screen_ecg_gate_turn_on">Ativar bloqueio (escrever \'1\')</string>
     <string name="l10n_settings_screen_ecg_gate_turn_off">Desativar bloqueio (escrever \'0\')</string>
+    <string name="l10n_settings_screen_ecg_listen_title">Captura da forma de onda de ECG (apenas WHOOP MG)</string>
+    <string name="l10n_settings_screen_ecg_listen_blurb">Guarda os registos de forma de onda tipo 43 da bracelete neste dispositivo para o ecrã de ECG. Apenas escuta: nada é escrito na bracelete. Apenas MG, desligado por defeito.</string>
     <string name="l10n_settings_screen_accent">Destaque</string>
     <string name="l10n_settings_screen_preset">Predefinição</string>
     <string name="settings_language">Idioma</string>
@@ -2662,4 +2665,27 @@
     <string name="l10n_settings_screen_skin_temperature_fc103030">Temperatura da pele</string>
     <string name="l10n_health_screen_no_measured_temperature_for_these_nights_showing_the_differe_69d4efae">Sem temperatura medida para estas noites — a mostrar a diferença em relação à sua referência. Uma sincronização reavalia as noites recentes e preenche-a.</string>
     <string name="l10n_health_screen_only_nights_with_a_measured_temperature_are_shown_the_others_b6f7c45b">Só são mostradas as noites com temperatura medida; as restantes registaram apenas a diferença em relação à referência.</string>
+    <!-- MG ECG page (experimental listen-only capture): descriptive readings only, never clinical. -->
+    <string name="l10n_ecg_screen_title">ECG</string>
+    <string name="l10n_ecg_screen_subtitle">Capturas experimentais da forma de onda do teu MG.</string>
+    <string name="l10n_ecg_screen_framing_title">Instrumento não validado</string>
+    <string name="l10n_ecg_screen_framing_body">O NOOP não é um dispositivo médico e isto não é um teste de ECG. Estes registos são mostrados exatamente como foram guardados: não são uma medição, não são um diagnóstico e não conseguem detetar nenhuma doença cardíaca. Nunca os uses para tomar decisões sobre a tua saúde. Se tiveres sintomas ou estiveres preocupado com o teu coração, fala com um médico.</string>
+    <string name="l10n_ecg_screen_empty_title">Ainda sem capturas de ECG</string>
+    <string name="l10n_ecg_screen_empty_body">Para capturar: abre Dispositivos, inicia uma captura de ECG no teu MG e segura as duas reentrâncias do fecho com os dedos da outra mão durante cerca de 30 segundos.</string>
+    <string name="l10n_ecg_screen_sessions">Sessões</string>
+    <string name="l10n_ecg_screen_session_meta">%1$d registos · %2$d%% de sinal · FC mediana %3$s</string>
+    <string name="l10n_ecg_screen_median_hr">%1$d bpm</string>
+    <string name="l10n_ecg_screen_no_hr">—</string>
+    <string name="l10n_ecg_screen_stat_duration">Duração</string>
+    <string name="l10n_ecg_screen_stat_coverage">Sinal</string>
+    <string name="l10n_ecg_screen_stat_median_hr">FC mediana</string>
+    <string name="l10n_ecg_screen_stat_records">Registos</string>
+    <string name="l10n_ecg_screen_hr_range">%1$d–%2$d bpm</string>
+    <string name="l10n_ecg_screen_duration_value">%1$ds</string>
+    <string name="l10n_ecg_screen_coverage_value">%1$d%%</string>
+    <string name="l10n_ecg_screen_records_value">%1$d</string>
+    <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
+    <string name="l10n_ecg_screen_firmware_unknown">desconhecida</string>
+    <string name="l10n_ecg_screen_strip_description">Traçado de ECG</string>
+    <string name="l10n_health_screen_ecg">ECG</string>
 </resources>

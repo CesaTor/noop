@@ -596,6 +596,9 @@ fun SettingsScreen(
     var helloDespiteRefusal by remember(rev) { mutableStateOf(puffinExperiment.helloDespiteBondRefusal) }
     // ECG raw-data gate (#891): the opt-in, the write result, and the attested-MG gate the buttons need.
     var ecgRawData by remember(rev) { mutableStateOf(puffinExperiment.ecgRawData) }
+    // ECG waveform listen (#ECG page): persist type-43 records for the ECG page. Listen-only,
+    // never a strap write (unlike ecgRawData above, which is the device-config write gate).
+    var ecgListen by remember(rev) { mutableStateOf(puffinExperiment.ecgListen) }
     val ecgGateReport by vm.ble.ecgRawDataGate.collectAsStateWithLifecycle()
     val ecgVariant by vm.ble.whoop5VariantFlow.collectAsStateWithLifecycle()
     val ecgVariantIsMG = ecgVariant.isMG
@@ -2524,6 +2527,44 @@ fun SettingsScreen(
                 }
                 Text(
                     uiString(R.string.l10n_settings_screen_noop_has_always_hoped_that_writing_19967036),
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- ECG waveform listen — persist type-43 records for the ECG page. Listen-only:
+                // no strap write (unlike the gate below, which is a device-config write). ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        uiString(R.string.l10n_settings_screen_ecg_listen_title),
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = ecgListen,
+                        onCheckedChange = {
+                            ecgListen = it
+                            puffinExperiment.ecgListen = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription =
+                                uiString(R.string.l10n_settings_screen_ecg_listen_title)
+                        },
+                    )
+                }
+                Text(
+                    uiString(R.string.l10n_settings_screen_ecg_listen_blurb),
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )

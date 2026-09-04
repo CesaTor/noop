@@ -467,6 +467,20 @@ DE: dict[str, str] = {
     "Your strap in real time — heart rate and frames as they arrive.": "Dein Strap in Echtzeit — Herzfrequenz und Frames, sobald sie eintreffen.",
     "Your thread starts here.": "Dein Verlauf beginnt hier.",
     "Zone": "Zone",
+    "Captures": "Aufnahmen",
+    "Experimental captures from your MG strap: unvalidated instrumentation, not a diagnosis. These describe what the strap recorded during a short capture run — duration, waveform coverage, and strap-stamped heart rate. They are not a medical measurement and cannot detect or rule out any condition. If you feel unwell, contact a qualified professional; in an emergency, your local emergency service.": "Experimentelle Aufnahmen deines MG-Bands: unvalidierte Instrumentierung, keine Diagnose. Sie beschreiben, was das Band während einer kurzen Aufnahmesitzung aufgezeichnet hat – Dauer, Wellenformabdeckung und pro Herzschlag gestempelte Herzfrequenz. Sie sind keine medizinische Messung und können keinen Zustand erkennen oder ausschließen. Wenn du dich unwohl fühlst, wende dich an eine qualifizierte Fachperson; im Notfall an deinen lokalen Notdienst.",
+    "No ECG captures yet": "Noch keine EKG-Aufnahmen",
+    "To capture: open Devices, choose your MG strap, start ECG capture, and hold the clasp for the whole 30-second window.": "Zum Aufnehmen: Öffne Geräte, wähle dein MG-Band, starte die EKG-Aufnahme und halte die Spange die gesamten 30 Sekunden lang.",
+    "Loading capture…": "Aufnahme wird geladen…",
+    "This capture banked no waveform records — the raw pump emitted nothing during the window (off, or never started).": "Diese Aufnahme hat keine Wellenformdaten gespeichert – die Rohdatenpumpe hat während des Fensters nichts gesendet (aus oder nie gestartet).",
+    "Waiting for your strap to identify as a WHOOP MG.": "Wartet darauf, dass sich dein Strap als WHOOP MG zu erkennen gibt.",
+    "Turn on Test Centre → Connection to run captures.": "Schalte Test Centre → Verbindung ein, um Aufnahmen zu starten.",
+    "Needs the encrypted bond — pair the strap first.": "Braucht die verschlüsselte Kopplung — kopple den Strap zuerst.",
+    "Asks your MG to start its ECG subsystem and logs whatever comes back. Not a medical measurement or diagnosis. Hold both clasp indents for the whole window.": "Fragt dein MG, sein EKG-Subsystem zu starten, und protokolliert, was zurückkommt. Keine medizinische Messung oder Diagnose. Halte beide Vertiefungen der Spange das ganze Fenster lang.",
+    "Capture running — keep holding the clasp.": "Aufnahme läuft — halte die Spange weiter.",
+    "Delete capture": "Aufnahme löschen",
+    "Delete this capture?": "Diese Aufnahme löschen?",
+    "This removes the banked records for this capture. The strap is untouched.": "Dies entfernt die gespeicherten Datensätze dieser Aufnahme. Der Strap bleibt unberührt.",
 }
 
 

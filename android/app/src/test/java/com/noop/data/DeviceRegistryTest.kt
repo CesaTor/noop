@@ -98,6 +98,8 @@ class DeviceRegistryTest {
         override suspend fun deletePpgHrFor(deviceId: String) { deletedTables += "ppgHrSample" to deviceId }
         override suspend fun deletePpgWaveformFor(deviceId: String) { deletedTables += "ppgWaveformSample" to deviceId }
         override suspend fun deleteV18AuxFor(deviceId: String) { deletedTables += "v18AuxSample" to deviceId }
+        override suspend fun deleteEcgSessionsFor(deviceId: String) { deletedTables += "ecgSession" to deviceId }
+        override suspend fun deleteEcgWaveformFor(deviceId: String) { deletedTables += "ecgWaveformSample" to deviceId }
         override suspend fun deleteEventsFor(deviceId: String) { deletedTables += "event" to deviceId }
         override suspend fun deleteBatteryFor(deviceId: String) { deletedTables += "battery" to deviceId }
         override suspend fun deleteDailyMetricsFor(deviceId: String) { deletedTables += "dailyMetric" to deviceId }
@@ -134,6 +136,8 @@ class DeviceRegistryTest {
         override suspend fun reKeyPpgHr(from: String, to: String) {}
         override suspend fun reKeyPpgWaveform(from: String, to: String) {}
         override suspend fun reKeyV18Aux(from: String, to: String) {}
+        override suspend fun reKeyEcgSessions(from: String, to: String) {}
+        override suspend fun reKeyEcgWaveform(from: String, to: String) {}
         override suspend fun reKeyEvents(from: String, to: String) {}
         override suspend fun reKeyBattery(from: String, to: String) {}
         override suspend fun reKeyDailyMetrics(from: String, to: String) {}
@@ -315,6 +319,8 @@ class DeviceRegistryTest {
             "journal", "workout", "appleDaily", "metricSeries", "dayOwnership",
             "scoreInputProvenance",
             "sleepStateSample", "labMarker", "liveSession", "dismissedWorkout", "dismissedSleep",
+            // v42-ecg-waveform: MG ECG sessions + waveform records are both deviceId-keyed.
+            "ecgSession", "ecgWaveformSample",
             // v38-apple-step-hour: hourly Apple-Health steps. No Android importer writes this table, but a
             // `.noopbak` restored from iOS carries its rows — and THIS path is "Remove Apple Health
             // imported data", so leaving them behind would be the plainest form of the defect.

@@ -883,6 +883,36 @@ extension WhoopStore {
         migrator.registerMigration("v41-drop-raw-imu-sample") { db in
             try db.drop(table: "rawImuSample")
         }
+        // v42 (MG ECG waveform): durable storage for WHOOP MG type-43 REALTIME_RAW_DATA records.
+        // The strap's 101-sample i16 buffer was fully DECODED (`realtimeRawSamples`) but only ever
+        // counted (probe triage) or held in the session-scoped raw-capture file — no queryable home.
+        // Two tables: `ecgSession` (one row per probe run, the UI's session list) and
+        // `ecgWaveformSample` (one row per record). `samples` packs via the shared i16-LE
+        // `packPpgSamples`/`unpackPpgSamples` (identical encoding, one implementation, no drift).
+        // `hrBpm` is the live standard-HR stamped per record at capture time (nullable, never
+        // fabricated); `signalPresent` is the stored byte-fill observation. `deviceId` rides BOTH
+        // tables (redundant on samples, deliberately) so device deletion stays a flat
+        // deviceId-keyed clear with no join. Additive only, NEW tables, no existing row touched.
+        // Twin of Room MIGRATION_35_36.
+        migrator.registerMigration("v42-ecg-waveform") { db in
+            try db.create(table: "ecgSession") { t in
+                t.column("id", .text).primaryKey()
+                t.column("deviceId", .text).notNull()
+                t.column("startedAtMs", .integer).notNull()
+                t.column("firmware", .text)
+                t.column("variant", .text)
+            }
+            try db.create(table: "ecgWaveformSample") { t in
+                t.column("sessionId", .text).notNull()
+                t.column("seq", .integer).notNull()
+                t.column("deviceId", .text).notNull()
+                t.column("tsMs", .integer).notNull()
+                t.column("hrBpm", .integer)
+                t.column("samples", .blob).notNull()
+                t.column("signalPresent", .boolean).notNull()
+                t.primaryKey(["sessionId", "seq"])
+            }
+        }
         return migrator
     }
 }
