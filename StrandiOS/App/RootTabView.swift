@@ -59,6 +59,9 @@ struct RootTabView: View {
     /// V8 liquid redesign is the default Today; the Settings toggle lets a user fall back to the classic
     /// Today if they prefer it (keyed identically to the SettingsView toggle). Default ON.
     @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
+    /// The Experimental ECG opt-in. Read here so the ECG More entry renders only once the
+    /// user has opted in (same key DevicesView's capture entry reads). Default off everywhere.
+    @AppStorage(PuffinExperiment.ecgKey) private var ecgEnabled = false
 
     /// The Today tab root, honouring the liquid/classic preference.
     @ViewBuilder private var todayTabRoot: some View {
@@ -410,6 +413,11 @@ struct RootTabView: View {
                     MoreRow("Live", "waveform.path.ecg", .live)
                     MoreRow("Workouts", "figure.run", .workouts)
                     MoreRow("Health", "heart.text.square.fill", .health)
+                    // MG ECG captures — renders only while the Experimental ECG opt-in is on
+                    // (same key the Devices capture entry and the sidebar read). Default off.
+                    if ecgEnabled {
+                        MoreRow("ECG", "waveform", .ecg)
+                    }
                     MoreRow("Lab Book", "books.vertical.fill", .labBook)
                     MoreRow("Stress", "bolt.heart.fill", .stress)
                     MoreRow("Breathe", "wind", .breathe)
@@ -532,7 +540,7 @@ struct RootTabView: View {
 /// registration in `moreTab`.
 private enum MoreDestination: Hashable {
     case insightsHub, intelligence, coach, insights, explore, compare
-    case live, workouts, health, labBook, stress, breathe, intervals, rhythm
+    case live, workouts, health, ecg, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
     case alarms, automations, testCentre, siriShortcuts, powerSaving, settings
 
@@ -547,6 +555,7 @@ private enum MoreDestination: Hashable {
         case .live:            LiveView()
         case .workouts:        WorkoutsView()
         case .health:          HealthView()
+        case .ecg:             EcgView()
         case .labBook:         LabBookView()
         case .stress:          StressView()
         case .breathe:         BreathingView()

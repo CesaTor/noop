@@ -33,6 +33,7 @@
     <string name="nav_vital_signs">体征</string>
     <string name="nav_lab_book">实验室</string>
     <string name="nav_rhythm">节律</string>
+    <string name="nav_ecg">心电图</string>
     <string name="nav_apple_health">Apple Health</string>
     <string name="nav_automations">自动化</string>
     <string name="nav_alarms">智能闹钟</string>
@@ -1881,6 +1882,8 @@
     <string name="l10n_settings_screen_ecg_gate_persistent_warning">这会写入一项会一直留在你手环上的设置，直到你改回来——它不是应用内的偏好设置，关闭 NOOP 也不会撤销。「关闭开关」一键即可再写入 \'0\'。全程只写入这一个键；你手环列出的另外六个从不触碰。</string>
     <string name="l10n_settings_screen_ecg_gate_turn_on">打开开关（写入 \'1\'）</string>
     <string name="l10n_settings_screen_ecg_gate_turn_off">关闭开关（写入 \'0\'）</string>
+    <string name="l10n_settings_screen_ecg_listen_title">ECG波形采集（仅WHOOP MG）</string>
+    <string name="l10n_settings_screen_ecg_listen_blurb">将手环的43型波形记录存储在此设备上，用于ECG页面。仅监听：不会向手环写入任何内容。仅MG，默认关闭。</string>
     <string name="l10n_settings_screen_accent">强调色</string>
     <string name="l10n_settings_screen_preset">预设</string>
     <string name="settings_language">语言</string>
@@ -2583,4 +2586,27 @@
     <string name="l10n_settings_screen_skin_temperature_fc103030">皮肤温度</string>
     <string name="l10n_health_screen_no_measured_temperature_for_these_nights_showing_the_differe_69d4efae">这些夜晚没有实测温度，显示的是与基线的差值。同步后会重新计算近期夜晚并补上。</string>
     <string name="l10n_health_screen_only_nights_with_a_measured_temperature_are_shown_the_others_b6f7c45b">仅显示有实测温度的夜晚；其余夜晚只记录了与基线的差值。</string>
+    <!-- MG ECG page (experimental listen-only capture): descriptive readings only, never clinical. -->
+    <string name="l10n_ecg_screen_title">心电图</string>
+    <string name="l10n_ecg_screen_subtitle">来自 MG 的实验性波形记录。</string>
+    <string name="l10n_ecg_screen_framing_title">未经验证的测量工具</string>
+    <string name="l10n_ecg_screen_framing_body">NOOP 不是医疗设备，这也不是心电图检查。这些记录按存储原样显示：它们不是测量结果，不是诊断，也无法检测任何心脏疾病。切勿将其用于健康决策。如有症状或担心心脏问题，请咨询医生。</string>
+    <string name="l10n_ecg_screen_empty_title">暂无心电图记录</string>
+    <string name="l10n_ecg_screen_empty_body">采集方法：打开“设备”，在 MG 上开始心电图采集，然后用另一只手的手指按住表扣上的两个凹槽约 30 秒。</string>
+    <string name="l10n_ecg_screen_sessions">会话</string>
+    <string name="l10n_ecg_screen_session_meta">%1$d 条记录 · %2$d%% 波形 · 中位心率 %3$s</string>
+    <string name="l10n_ecg_screen_median_hr">%1$d bpm</string>
+    <string name="l10n_ecg_screen_no_hr">—</string>
+    <string name="l10n_ecg_screen_stat_duration">时长</string>
+    <string name="l10n_ecg_screen_stat_coverage">波形</string>
+    <string name="l10n_ecg_screen_stat_median_hr">中位心率</string>
+    <string name="l10n_ecg_screen_stat_records">记录数</string>
+    <string name="l10n_ecg_screen_hr_range">%1$d–%2$d bpm</string>
+    <string name="l10n_ecg_screen_duration_value">%1$d秒</string>
+    <string name="l10n_ecg_screen_coverage_value">%1$d%%</string>
+    <string name="l10n_ecg_screen_records_value">%1$d</string>
+    <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
+    <string name="l10n_ecg_screen_firmware_unknown">未知</string>
+    <string name="l10n_ecg_screen_strip_description">波形图</string>
+    <string name="l10n_health_screen_ecg">心电图</string>
 </resources>

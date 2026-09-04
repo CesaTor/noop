@@ -7,6 +7,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     case insightsHub = "What Moves You"
     case coach = "Coach"
     case live = "Live"
+    case ecg = "ECG"
     case breathe = "Breathe"
     case intervals = "Intervals"
     case explore = "Explore"
@@ -44,6 +45,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .insightsHub: return "What Moves You"
         case .coach: return "Coach"
         case .live: return "Live"
+        case .ecg: return "ECG"
         case .breathe: return "Breathe"
         case .intervals: return "Intervals"
         case .explore: return "Explore"
@@ -88,6 +90,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .insightsHub: return String(localized: "What Moves You")
         case .coach: return String(localized: "Coach")
         case .live: return String(localized: "Live")
+        case .ecg: return String(localized: "ECG")
         case .breathe: return String(localized: "Breathe")
         case .intervals: return String(localized: "Intervals")
         case .explore: return String(localized: "Explore")
@@ -124,6 +127,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .insightsHub: return "wand.and.sparkles"
         case .coach: return "sparkles"
         case .live: return "waveform.path.ecg"
+        case .ecg: return "waveform"
         case .breathe: return "lungs.fill"
         case .intervals: return "timer"
         case .explore: return "square.grid.2x2.fill"
@@ -153,8 +157,8 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// One collapsible sidebar section (S1, #805): the 27 flat `NavItem` cases are grouped into ~5
-/// labelled sections so the macOS sidebar stops being a 28-item flat wall. The enum cases are NOT
+/// One collapsible sidebar section (S1, #805): the 28 flat `NavItem` cases are grouped into ~5
+/// labelled sections so the macOS sidebar stops being a 29-item flat wall. The enum cases are NOT
 /// touched (M5 gate): only the layout that consumes them changes. `NavGroup.all` is the single source
 /// of truth for what each section holds, so the M5 routability test can assert every `NavItem` case is
 /// still present across the groups (nothing vanished the way the iPhone Smart-Alarm row did).
@@ -167,12 +171,12 @@ struct NavGroup: Identifiable {
     /// The 5 sidebar sections, in order, mirroring the iOS More-tab grouping idiom (Insights / Body /
     /// Data & App) plus Today + Sleep as their own top sections. Devices/pairing sits at the TOP of the
     /// Data & App group so the first thing a new user reaches for stays near the surface. Every one of the
-    /// 27 `NavItem` cases appears exactly once across these groups (asserted by the M5 routability test).
+    /// 28 `NavItem` cases appears exactly once across these groups (asserted by the M5 routability test).
     static let all: [NavGroup] = [
         NavGroup(title: "Today", id: "today", items: [.today]),
         NavGroup(title: "Sleep", id: "sleep", items: [.sleep]),
         NavGroup(title: "Body", id: "body", items: [
-            .workouts, .live, .health, .stress, .intervals, .breathe,
+            .workouts, .live, .health, .stress, .intervals, .breathe, .ecg,
         ]),
         // S6: the overlapping insight surfaces (Intelligence / What Moves You / Insights / Insights Hub)
         // all collapse under this single Insights group rather than scattering across the flat list.
@@ -202,12 +206,15 @@ struct RootView: View {
     @EnvironmentObject var router: NavRouter
     /// The liquid Today (default) vs the classic Today, same flag the iOS shell + Settings toggle read.
     @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
+    /// The Experimental ECG opt-in. Read here so the ECG sidebar entry renders only once the
+    /// user has opted in (same key DevicesView's capture entry reads). Default off everywhere.
+    @AppStorage(PuffinExperiment.ecgKey) private var ecgEnabled = false
     @State private var selection: NavItem? = .today
     /// Which sidebar groups are expanded (S1, #805). Default = the group owning the launch selection
     /// (`.today`). The single-item Today/Sleep sections always read expanded so their one row shows; the
     /// multi-item groups (Body / Insights / Data & App) collapse to just their header until tapped.
     @State private var expandedGroups: Set<String> = Self.initialExpandedGroups(for: .today)
-    /// Sidebar filter text (#915). Since the collapsible sections landed (S1), 27 of the 28
+    /// Sidebar filter text (#915). Since the collapsible sections landed (S1), 28 of the 29
     /// destinations sit inside collapsed groups; typing here filters every group by its localized row
     /// title so any screen is reachable without knowing which section owns it.
     @State private var searchQuery = ""
@@ -378,9 +385,13 @@ struct RootView: View {
     /// user-search semantics (case-insensitive, diacritic-insensitive, locale-aware) in one call.
     /// ALL groups filter, including single-item Today/Sleep; a group with no hits disappears entirely.
     private func visibleItems(in group: NavGroup) -> [NavItem] {
+        // The ECG page renders only while the Experimental ECG opt-in is on (same key the
+        // Devices capture entry and the BLE allowlist read). Gated before the search filter
+        // so the row is unreachable — not merely unlisted — with the opt-in off.
+        let gated = group.items.filter { $0 != .ecg || ecgEnabled }
         let query = trimmedQuery
-        guard !query.isEmpty else { return group.items }
-        return group.items.filter { $0.localizedTitle.localizedStandardContains(query) }
+        guard !query.isEmpty else { return gated }
+        return gated.filter { $0.localizedTitle.localizedStandardContains(query) }
     }
 
     /// One selectable destination row (same Label styling the flat list used), tagged for selection.
@@ -424,6 +435,7 @@ struct RootView: View {
         case .insightsHub: InsightsHubView()
         case .coach: CoachView()
         case .live: liveDetail
+        case .ecg: EcgView()
         case .breathe: BreathingView()
         case .intervals: IntervalTimerView()
         case .explore: MetricExplorerView()

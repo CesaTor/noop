@@ -33,6 +33,7 @@
     <string name="nav_vital_signs">Znaki życiowe</string>
     <string name="nav_lab_book">Książka Laboratorium</string>
     <string name="nav_rhythm">Rytm</string>
+    <string name="nav_ecg">EKG</string>
     <string name="nav_apple_health">Apple Health</string>
     <string name="nav_automations">Automatyka</string>
     <string name="nav_alarms">Alarmy</string>
@@ -1940,6 +1941,8 @@
     <string name="l10n_settings_screen_ecg_gate_persistent_warning">Spowoduje to zapisanie ustawienia, które POZOSTAJE NA TWOIM PASKU, dopóki nie zmienisz go z powrotem — nie jest to preferencja aplikacji i zamknięcie NOOP nie spowoduje jego cofnięcia. „Wyłącz bramę” ponownie zapisuje „0” jednym dotknięciem. Zawsze zapisywany jest tylko ten jeden klucz; pozostałych sześć wymienionych na pasku nie jest nigdy dotykanych.</string>
     <string name="l10n_settings_screen_ecg_gate_turn_on">Włącz bramę (wpisz \'1\')</string>
     <string name="l10n_settings_screen_ecg_gate_turn_off">Wyłącz bramę (wpisz \'0\')</string>
+    <string name="l10n_settings_screen_ecg_listen_title">Rejestrowanie przebiegu EKG (tylko WHOOP MG)</string>
+    <string name="l10n_settings_screen_ecg_listen_blurb">Zapisuje rekordy przebiegu typu 43 opaski na tym urządzeniu na potrzeby ekranu EKG. Tylko nasłuch: nic nie jest zapisywane na opasce. Tylko MG, domyślnie wyłączone.</string>
     <string name="l10n_settings_screen_accent">Akcent</string>
     <string name="l10n_settings_screen_preset">Wstępnie ustawione</string>
     <string name="settings_language">Język</string>
@@ -2674,4 +2677,27 @@
     <string name="l10n_settings_screen_skin_temperature_fc103030">Temperatura skóry</string>
     <string name="l10n_health_screen_no_measured_temperature_for_these_nights_showing_the_differe_69d4efae">Brak zmierzonej temperatury dla tych nocy — pokazano różnicę względem Twojej wartości bazowej. Synchronizacja ponownie przelicza ostatnie noce i ją uzupełnia.</string>
     <string name="l10n_health_screen_only_nights_with_a_measured_temperature_are_shown_the_others_b6f7c45b">Pokazywane są tylko noce ze zmierzoną temperaturą; w pozostałych zapisano jedynie różnicę względem wartości bazowej.</string>
+    <!-- MG ECG page (experimental listen-only capture): descriptive readings only, never clinical. -->
+    <string name="l10n_ecg_screen_title">EKG</string>
+    <string name="l10n_ecg_screen_subtitle">Eksperymentalne zapisy kształtu fali z Twojego MG.</string>
+    <string name="l10n_ecg_screen_framing_title">Niezwalidowane narzędzie pomiarowe</string>
+    <string name="l10n_ecg_screen_framing_body">NOOP nie jest wyrobem medycznym i to nie jest badanie EKG. Te zapisy są pokazane dokładnie tak, jak zostały zapisane: nie są pomiarem, nie są diagnozą i nie wykrywają żadnej choroby serca. Nigdy nie używaj ich do podejmowania decyzji zdrowotnych. W razie objawów lub obaw o serce skonsultuj się z lekarzem.</string>
+    <string name="l10n_ecg_screen_empty_title">Brak zapisów EKG</string>
+    <string name="l10n_ecg_screen_empty_body">Aby nagrać: otwórz Urządzenia, rozpocznij rejestrację EKG na swoim MG, a następnie przytrzymaj oba wgłębienia na klamrze palcami drugiej ręki przez około 30 sekund.</string>
+    <string name="l10n_ecg_screen_sessions">Sesje</string>
+    <string name="l10n_ecg_screen_session_meta">%1$d zapisów · %2$d%% sygnału · mediana HR %3$s</string>
+    <string name="l10n_ecg_screen_median_hr">%1$d bpm</string>
+    <string name="l10n_ecg_screen_no_hr">—</string>
+    <string name="l10n_ecg_screen_stat_duration">Czas trwania</string>
+    <string name="l10n_ecg_screen_stat_coverage">Sygnał</string>
+    <string name="l10n_ecg_screen_stat_median_hr">Mediana HR</string>
+    <string name="l10n_ecg_screen_stat_records">Zapisy</string>
+    <string name="l10n_ecg_screen_hr_range">%1$d–%2$d bpm</string>
+    <string name="l10n_ecg_screen_duration_value">%1$d s</string>
+    <string name="l10n_ecg_screen_coverage_value">%1$d%%</string>
+    <string name="l10n_ecg_screen_records_value">%1$d</string>
+    <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
+    <string name="l10n_ecg_screen_firmware_unknown">nieznane</string>
+    <string name="l10n_ecg_screen_strip_description">Zapis EKG</string>
+    <string name="l10n_health_screen_ecg">EKG</string>
 </resources>

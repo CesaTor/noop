@@ -139,6 +139,14 @@ interface WhoopDao : DeviceRegistryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPpgWaveform(rows: List<PpgWaveformSampleEntity>): List<Long>
 
+    /** MG ECG capture session. Idempotent by id. (v42) */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertEcgSession(row: EcgSessionEntity): Long
+
+    /** MG ECG type-43 waveform rows (packed i16 BLOB). Idempotent by (sessionId, seq). (v42) */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertEcgWaveform(rows: List<EcgWaveformSampleEntity>): List<Long>
+
     /**
      * The remaining 5/MG v18 per-second fields, one compact blob per strap-second. Idempotent by
      * (deviceId, ts) — IGNORE keeps the FIRST-seen row, matching every other per-second stream, so a
@@ -364,6 +372,14 @@ interface WhoopDao : DeviceRegistryDao {
     )
     suspend fun ppgWaveformSamples(deviceId: String, from: Long, to: Long, limit: Int):
         List<PpgWaveformSampleEntity>
+
+    /** MG ECG sessions for a device, newest first. (v42) */
+    @Query("SELECT * FROM ecgSession WHERE deviceId = :deviceId ORDER BY startedAtMs DESC")
+    suspend fun ecgSessions(deviceId: String): List<EcgSessionEntity>
+
+    /** One MG ECG session's records in capture order. (v42) */
+    @Query("SELECT * FROM ecgWaveformSample WHERE sessionId = :sessionId ORDER BY seq ASC")
+    suspend fun ecgWaveformSamples(sessionId: String): List<EcgWaveformSampleEntity>
 
     /**
      * The banked 5/MG v18 auxiliary-field rows in [from, to] (ascending). Empty on a WHOOP 4.0 and for
@@ -998,6 +1014,7 @@ interface WhoopDao : DeviceRegistryDao {
     @Query("SELECT COUNT(*) FROM ppgHrSample") suspend fun countPpgHr(): Int
     @Query("SELECT COUNT(*) FROM sleepStateSample") suspend fun countSleepState(): Int
     @Query("SELECT COUNT(*) FROM ppgWaveformSample") suspend fun countPpgWaveform(): Int
+    @Query("SELECT COUNT(*) FROM ecgWaveformSample") suspend fun countEcgWaveform(): Int
     @Query("SELECT COUNT(*) FROM v18AuxSample") suspend fun countV18Aux(): Int
     @Query("SELECT COUNT(*) FROM respSample") suspend fun countResp(): Int
     @Query("SELECT COUNT(*) FROM gravitySample") suspend fun countGravity(): Int

@@ -61,6 +61,15 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_ECG_RAW_DATA, false)
         set(v) = prefs.edit().putBoolean(KEY_ECG_RAW_DATA, v).apply()
 
+    /** True if the user opted in to LISTENING for WHOOP MG ECG type-43 records (default false):
+     *  CRC-valid REALTIME_RAW_DATA frames are persisted as waveform sessions for the ECG page.
+     *  Listen-only — this NEVER authorizes a strap write (unlike [ecgRawData], which is the separate
+     *  opt-in for the `enable_raw_data_w_ecg` device-config write). Additionally gated on
+     *  `Whoop5Variant.isMG` at the call site. Mirrors the macOS `PuffinExperiment.ecgKey`. */
+    var ecgListen: Boolean
+        get() = prefs.getBoolean(KEY_WHOOP5_ECG, false)
+        set(v) = prefs.edit().putBoolean(KEY_WHOOP5_ECG, v).apply()
+
     /** True if the user opted in to "Experimental sleep staging (V2)": detected nights are re-staged with
      *  [com.noop.analytics.SleepStagerV2] (the transparent cardiorespiratory recipe, reimplemented from
      *  contributor PR #600) instead of the older V1 [com.noop.analytics.SleepStager]. Pure analysis switch
@@ -212,9 +221,10 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
      * The line is "does it SEND something to the strap": these arm probes, raw-capture writes, the R22
      * deep-data write, the broadcast-HR write, the ECG gate, an explicit pairing and the unbonded offload
      * probe, all of which target hardware that may not support
-     * them. Pure analysis flags are deliberately left alone even when they only do anything on one
-     * family — [ppgHrSubLagInterp] only affects v26 optical records, which a 4.0 never sends, so it is
-     * inert rather than misapplied. [experimentalSleepV2], [hrvReadiness] and [motionAwareWake] are
+     * them. The listen-only ECG capture opt-in rides along so a family switch cannot leave a stale
+     * listen enabled either. Pure analysis flags are deliberately left alone even when they only do anything
+     * on one family — [ppgHrSubLagInterp] only affects v26 optical records, which a 4.0 never sends, so it
+     * is inert rather than misapplied. [experimentalSleepV2], [hrvReadiness] and [motionAwareWake] are
      * model-agnostic (the last self-gates on observed sample density, never on family, per #345).
      */
     fun resetFiveMGGatedProbes() {
@@ -251,6 +261,9 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         /** "ECG raw-data gate" opt-in — the `enable_raw_data_w_ecg` strap write (mirrors macOS
          *  `PuffinExperiment.ecgRawDataKey`). (#891) */
         const val KEY_ECG_RAW_DATA = "noopEcgRawDataGate"
+        /** "ECG listen" opt-in — persist CRC-valid MG type-43 records for the ECG page. Listen-only,
+         *  never a strap write (mirrors macOS `PuffinExperiment.ecgKey`). */
+        const val KEY_WHOOP5_ECG = "noopWhoop5Ecg"
 
         /** "Ask Android to pair" opt-in — the explicit `createBond()` experiment (#1635). Android-only,
          *  so no macOS key to mirror. */
@@ -269,8 +282,8 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         /** The 5/MG-only probe keys, in ONE place: [resetFiveMGGatedProbes] clears exactly these, and
          *  SettingsScreen watches exactly these for external writes. Two lists would drift. */
         internal val FIVE_MG_GATED_KEYS =
-            listOf(KEY, KEY_CAPTURE, KEY_DEEP_DATA, KEY_BROADCAST_HR, KEY_ECG_RAW_DATA, KEY_EXPLICIT_BOND,
-                   KEY_UNBONDED_OFFLOAD, KEY_CLEAR_STALE_BOND)
+            listOf(KEY, KEY_CAPTURE, KEY_DEEP_DATA, KEY_BROADCAST_HR, KEY_ECG_RAW_DATA, KEY_WHOOP5_ECG,
+                   KEY_EXPLICIT_BOND, KEY_UNBONDED_OFFLOAD, KEY_CLEAR_STALE_BOND)
 
         /** "Experimental sleep staging (V2)" opt-in (mirrors macOS `PuffinExperiment.experimentalSleepV2Key`). */
         const val KEY_EXPERIMENTAL_SLEEP_V2 = "noopExperimentalSleepV2"

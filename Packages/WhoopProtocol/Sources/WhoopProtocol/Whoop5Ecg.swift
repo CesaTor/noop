@@ -623,3 +623,39 @@ public enum Whoop5Ecg {
         return Array(frame[payloadStart..<payloadEnd])
     }
 }
+
+// MARK: - Stored ECG waveform rows (WhoopStore v42)
+//
+// Row shapes for the durable type-43 capture. `deviceId` lives on the tables, not the rows
+// (every store table keys deviceId separately). `seq` is the session-scoped record index —
+// deterministic session order, and the PK tiebreak for two records sharing a millisecond
+// (rrInterval v24 form). `hrBpm` is the live standard-HR stamped per record at capture time
+// (nullable: absent means unstamped, never a fabricated number). `signalPresent` is the
+// byte-fill observation from `realtimeRawSignalPresent`, stored so reads don't recompute it.
+public struct EcgWaveformSession: Equatable, Codable, Sendable {
+    public let id: String          // "ecg-<startTsMs>", via `makeId(startTsMs:)`
+    public let startedAtMs: Int
+    public let firmware: String?
+    public let variantLabel: String?
+
+    public init(id: String, startedAtMs: Int, firmware: String? = nil, variantLabel: String? = nil) {
+        self.id = id; self.startedAtMs = startedAtMs
+        self.firmware = firmware; self.variantLabel = variantLabel
+    }
+
+    /// Deterministic session id. Shared with the Kotlin twin — same string on both platforms.
+    public static func makeId(startTsMs: Int) -> String { "ecg-\(startTsMs)" }
+}
+
+public struct EcgWaveformSample: Equatable, Codable, Sendable {
+    public let seq: Int
+    public let tsMs: Int
+    public let hrBpm: Int?
+    public let samples: [Int]
+    public let signalPresent: Bool
+
+    public init(seq: Int, tsMs: Int, hrBpm: Int? = nil, samples: [Int], signalPresent: Bool) {
+        self.seq = seq; self.tsMs = tsMs; self.hrBpm = hrBpm
+        self.samples = samples; self.signalPresent = signalPresent
+    }
+}

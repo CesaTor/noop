@@ -745,3 +745,59 @@ data class V18AuxSampleEntity(
         return result
     }
 }
+
+/**
+ * MG ECG capture session: one row per probe run, the ECG page's session list (v42 /
+ * MIGRATION_35_36). Twin of the Swift `EcgWaveformSession` (WhoopStore `v42-ecg-waveform`
+ * migration). Fields in the SAME order as the GRDB schema (id, deviceId, startedAtMs,
+ * firmware, variant) so Room's generated shape stays byte-identical.
+ */
+@Entity(tableName = "ecgSession", primaryKeys = ["id"])
+data class EcgSessionEntity(
+    val id: String,
+    val deviceId: String,
+    val startedAtMs: Long,
+    val firmware: String? = null,
+    val variant: String? = null,
+)
+
+/**
+ * One MG ECG type-43 record: 101 i16 samples + the live standard-HR stamped at capture time
+ * (v42 / MIGRATION_35_36). Twin of the Swift `EcgWaveformSample`. The samples pack into a compact
+ * BLOB (2 bytes/sample, little-endian i16, see [StreamPersistence.packPpgSamples]) — the IDENTICAL
+ * encoding the PPG waveform uses, one implementation, so the two waveform tables cannot drift apart.
+ * `hrBpm` null means unstamped, never a fabricated number; `signalPresent` is the stored byte-fill
+ * observation. `deviceId` rides redundantly (deliberately) so device deletion stays a flat
+ * deviceId-keyed clear. PK (sessionId, seq): `seq` is the session-scoped record index. Fields in the
+ * SAME order as the GRDB schema (sessionId, seq, deviceId, tsMs, hrBpm, samples, signalPresent).
+ */
+@Entity(tableName = "ecgWaveformSample", primaryKeys = ["sessionId", "seq"])
+data class EcgWaveformSampleEntity(
+    val sessionId: String,
+    val seq: Int,
+    val deviceId: String,
+    val tsMs: Long,
+    val hrBpm: Int? = null,
+    val samples: ByteArray,
+    val signalPresent: Boolean,
+) {
+    // ByteArray needs structural equals/hashCode (the generated identity ones break round-trip asserts).
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is EcgWaveformSampleEntity) return false
+        return sessionId == other.sessionId && seq == other.seq && deviceId == other.deviceId &&
+            tsMs == other.tsMs && hrBpm == other.hrBpm && samples.contentEquals(other.samples) &&
+            signalPresent == other.signalPresent
+    }
+
+    override fun hashCode(): Int {
+        var result = sessionId.hashCode()
+        result = 31 * result + seq
+        result = 31 * result + deviceId.hashCode()
+        result = 31 * result + tsMs.hashCode()
+        result = 31 * result + (hrBpm ?: 0)
+        result = 31 * result + samples.contentHashCode()
+        result = 31 * result + signalPresent.hashCode()
+        return result
+    }
+}

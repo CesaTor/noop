@@ -1154,6 +1154,26 @@ final class Repository: ObservableObject {
         return Self.mergeRRByIdentity(lists)
     }
 
+    /// MG ECG capture sessions for the active strap, newest first — the ECG page's session list.
+    /// Thin async accessor over the store (no refactors): empty when the store is closed or unreadable.
+    func ecgSessions() async -> [EcgWaveformSession] {
+        guard let store = await ensureStore() else { return [] }
+        return (try? await store.ecgSessions(deviceId: deviceId)) ?? []
+    }
+
+    /// One capture session's waveform records in capture order. Same thin-accessor contract.
+    func ecgWaveformSamples(sessionId: String) async -> [EcgWaveformSample] {
+        guard let store = await ensureStore() else { return [] }
+        return (try? await store.ecgWaveformSamples(sessionId: sessionId)) ?? []
+    }
+
+    /// Delete one capture session and its records. Returns false when the store is
+    /// closed or the delete threw (the page treats either as "still there").
+    func deleteEcgSession(_ sessionId: String) async -> Bool {
+        guard let store = await ensureStore() else { return false }
+        return (try? await store.deleteEcgSession(sessionId)) != nil
+    }
+
     /// Logical day-start of the most recent day the active device has HR data for, or nil when the store is
     /// empty. Lets the Deep Timeline open on a day that actually has data instead of a possibly-empty today
     /// right after a history sync , the #597 root cause (the timeline was today-only with no way back).

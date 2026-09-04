@@ -31,6 +31,8 @@ import com.noop.data.EventEntry
 import com.noop.data.StandardHrMapping
 import com.noop.data.StreamBatch
 import com.noop.data.StreamPersistence
+import com.noop.data.EcgSessionEntity
+import com.noop.data.EcgWaveformSampleEntity
 import com.noop.protocol.Whoop5RawImu
 import com.noop.testcentre.ImuSessionFileStore
 import com.noop.data.WhoopRepository
@@ -54,6 +56,7 @@ import com.noop.protocol.Framing
 import com.noop.protocol.HapticClock
 import com.noop.protocol.Reassembler
 import com.noop.protocol.Whoop5Variant
+import com.noop.protocol.Whoop5Ecg
 import com.noop.protocol.RebootProbeVariant
 import com.noop.protocol.Streams
 import com.noop.protocol.StandardHrContact
@@ -420,6 +423,15 @@ data class GroundTruthImuStatus(
     val lastPacketAtMs: Long? = null,
     val note: String = "Not started",
 )
+
+/** The writer's open-session cursor: which session trailing records append to, when the last one
+ *  landed, and the next record index. Null while no session is open. Top-level (not companion):
+ *  test sources reference these shapes directly, beside `GroundTruthImuStatus` above. */
+internal data class EcgCaptureCursor(val sessionId: String, val lastTsMs: Long, val nextSeq: Int)
+
+/** One writer decision for a CRC-valid type-43 frame: the session + record index to persist, and
+ *  whether the session row must be opened first. Null means drop the frame. */
+internal data class EcgCaptureStep(val sessionId: String, val seq: Int, val openSession: Boolean)
 
 internal fun standardHrBufferReachedFlushThreshold(
     hrCount: Int,
@@ -1052,6 +1064,36 @@ class WhoopBleClient(
         fun isWhoop5EventFrame(frame: ByteArray): Boolean =
             frame.size > WHOOP5_INNER_RECORD_OFFSET &&
                 (frame[WHOOP5_INNER_RECORD_OFFSET].toInt() and 0xFF) == WHOOP5_EVENT_TYPE
+
+        /** Silence gap that closes one MG ECG capture session and opens the next (60 s). Android has no
+         *  probe-run driver to delimit captures the way Apple's `beginEcgProbeRun` does, so sessions are
+         *  cut by time: records arriving more than this after the previous one start a new session. */
+        const val ECG_SESSION_GAP_MS = 60_000L
+
+
+        /**
+         * Pure boundary rule for the MG ECG listen writer: with [cursor] the currently-open session (null
+         *  when none), decide what one CRC-valid type-43 frame arriving at [nowMs] becomes. Returns null
+         *  (drop) unless the link is bonded to an MG with the listen opt-in on; otherwise opens a new
+         *  session (`ecg-<nowMs>`, via [Whoop5Ecg.sessionId]) when none is open or the gap since the last
+         *  record exceeds [ECG_SESSION_GAP_MS], and appends with `seq++` inside the gap. Pure so the
+         *  session-splitting is unit-testable without a strap; the caller advances its cursor from the
+         *  returned step and persists through [com.noop.data.WhoopRepository].
+         */
+        internal fun ecgCaptureStep(
+            cursor: EcgCaptureCursor?,
+            nowMs: Long,
+            bonded: Boolean,
+            isMG: Boolean,
+            listenOn: Boolean,
+        ): EcgCaptureStep? {
+            if (!bonded || !isMG || !listenOn) return null
+            if (cursor == null || nowMs - cursor.lastTsMs > ECG_SESSION_GAP_MS) {
+                return EcgCaptureStep(Whoop5Ecg.sessionId(nowMs), 0, openSession = true)
+            }
+            return EcgCaptureStep(cursor.sessionId, cursor.nextSeq, openSession = false)
+        }
+
         /** Rotation threshold (~10 MB) and absolute per-file line cap (a full overnight offload is
          *  ~28k frames; 40k leaves headroom — his fork's 20k truncated real sessions, #78 fork). */
         private const val WHOOP5_CAPTURE_MAX_BYTES = 10L * 1024 * 1024
@@ -3835,6 +3877,7 @@ class WhoopBleClient(
      */
     fun setActiveDeviceId(id: String) {
         if (id.isEmpty()) return
+        if (id != deviceId) ecgCursor = null   // capture sessions belong to one device
         deviceId = id
         backfiller.deviceId = id
     }
@@ -7174,6 +7217,14 @@ class WhoopBleClient(
                 }
             }
 
+            "REALTIME_RAW_DATA" -> {
+                // MG ECG listen path: CRC already gated at this router's entry (`parsed.crcOk == false`
+                // returns above), so a frame reaching here is verified. Persist is read-only toward the
+                // strap and gated inside [noteEcgRawRecord] (bonded MG + listen opt-in); every other
+                // consumer is untouched — this type previously fell through to the ignore-all `else`.
+                noteEcgRawRecord(frame)
+            }
+
             "COMMAND_RESPONSE" -> {
                 doubleValue(parsed.parsed["battery_pct"])?.let { setBattery(it) }
                 // #592: GET_EXTENDED_BATTERY_INFO / GET_BATTERY_LEVEL responses may carry pack voltage.
@@ -8093,6 +8144,11 @@ class WhoopBleClient(
     private var ecgGateReport: EcgRawDataGateReport? = null
     private var ecgGateStep = 0
 
+    /** Open MG ECG capture session for the listen writer ([noteEcgRawRecord]). Null while no session is
+     *  open; a device switch closes it (sessions belong to one device) while a plain reconnect keeps it
+     *  (the 60 s gap rule in [ecgCaptureStep] cuts the session if the link was down that long). */
+    private var ecgCursor: EcgCaptureCursor? = null
+
     /** EXPERIMENTAL (#891): write `enable_raw_data_w_ecg`='1'/'0' on an attested MG, then read it back and
      *  report what the strap actually stores — the ack is NOT the result. Gates: opt-in on, MG-attested,
      *  connected + bonded. Not wear-gated (it stores a value, it does not start a stream). Reversible in one
@@ -8157,6 +8213,53 @@ class WhoopBleClient(
 
     /** Clear the #891 result (Settings row dismissed / disconnect). Twin of Swift clearEcgRawDataGate(). */
     fun clearEcgRawDataGate() { _ecgRawDataGate.value = null }
+
+    /**
+     * Persist one CRC-valid MG type-43 record for the ECG page. READ-ONLY toward the strap: this observes
+     * an already-routed frame and writes only to the on-device store, never back to hardware.
+     *
+     * Gates: bonded MG + the listen opt-in ([PuffinExperiment.ecgListen]) — the same gates as the Apple
+     * `noteEcgProbeRawRecord` path, minus the probe-run driver Android has no twin of (sessions are cut
+     * by the 60 s silence gap in [ecgCaptureStep] instead). The cursor advances synchronously on the
+     * inbound thread so arrival order (and `seq`) survives the async insert; the session row is opened
+     * first (IGNORE keeps a re-open idempotent) and the waveform row carries the live standard-HR stamped
+     * at capture time — null when none is streaming, never a fabricated number — plus the packed i16
+     * samples and the byte-fill observation. A persist failure is logged, never thrown: a bad row drops
+     * one record and the link stays up.
+     */
+    private fun noteEcgRawRecord(frame: ByteArray) {
+        if (!Whoop5Ecg.isRealtimeRawRecord(frame)) return
+        val nowMs = System.currentTimeMillis()
+        val variant = whoop5Variant()
+        val step = ecgCaptureStep(ecgCursor, nowMs, didBond, variant.isMG, puffinExperiment.ecgListen)
+            ?: return
+        val samples = Whoop5Ecg.realtimeRawSamples(frame) ?: return
+        val signalPresent = Whoop5Ecg.realtimeRawSignalPresent(frame) ?: false
+        val hrBpm = _state.value.heartRate?.takeIf { it in 30..220 }
+        val device = deviceId
+        val firmware = _state.value.strapFirmware
+        val variantLabel = variant.label
+        ecgCursor = EcgCaptureCursor(step.sessionId, nowMs, step.seq + 1)
+        val openSession = step.openSession
+        ioScope.launch {
+            try {
+                if (openSession) {
+                    repository.openEcgSession(EcgSessionEntity(step.sessionId, device, nowMs, firmware, variantLabel))
+                }
+                repository.insertEcgWaveform(
+                    listOf(
+                        EcgWaveformSampleEntity(
+                            step.sessionId, step.seq, device, nowMs, hrBpm,
+                            StreamPersistence.packPpgSamples(samples.toList()), signalPresent,
+                        ),
+                    ),
+                )
+            } catch (t: Throwable) {
+                if (t is kotlin.coroutines.cancellation.CancellationException) throw t
+                log("ECG listen: dropping one type-43 record (${t.javaClass.simpleName}) — link stays up")
+            }
+        }
+    }
 
     /** The write's own COMMAND_RESPONSE — recorded, never the proof (#891). The puffin envelope puts the
      *  type at cmdOff-2 and the cmd at cmdOff, so the result byte is at cmdOff+2. */

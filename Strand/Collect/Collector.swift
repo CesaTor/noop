@@ -165,6 +165,21 @@ final class Collector {
         return (try? await s.gravitySamples(deviceId: deviceId, from: from, to: to, limit: limit)) ?? []
     }
 
+    /// Open one MG ECG capture session (one row per probe run — the ECG page's session list).
+    /// Fire-and-forget from the probe path: a missing store or a throw banks nothing, never surfaces.
+    /// Mirrors recentGravity() — the BLE probe hook reaches the store through the Collector because
+    /// the Collector owns the concrete store.
+    func openEcgSession(_ session: EcgWaveformSession, deviceId: String) async {
+        guard let s = concreteStore else { return }
+        try? await s.openEcgSession(session, deviceId: deviceId)
+    }
+
+    /// Bank one captured type-43 waveform record. Same fire-and-forget contract as openEcgSession.
+    func insertEcgWaveform(_ row: EcgWaveformSample, sessionId: String, deviceId: String) async {
+        guard let s = concreteStore else { return }
+        try? await s.insertEcgWaveform([row], sessionId: sessionId, deviceId: deviceId)
+    }
+
     /// Apply the raw-retention policy. Returns rows pruned (0 if no concrete store).
     @discardableResult
     func prune() async -> Int {

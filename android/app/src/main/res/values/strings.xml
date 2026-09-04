@@ -37,6 +37,7 @@
     <string name="nav_vital_signs">Vital Signs</string>
     <string name="nav_lab_book">Lab Book</string>
     <string name="nav_rhythm">Rhythm</string>
+    <string name="nav_ecg">ECG</string>
     <string name="nav_apple_health">Apple Health</string>
     <string name="nav_automations">Automations</string>
     <string name="nav_alarms">Alarms</string>
@@ -2083,6 +2084,8 @@
     <string name="l10n_settings_screen_ecg_gate_persistent_warning">This writes a setting that STAYS ON YOUR STRAP until you change it back — it isn\'t an app preference, and closing NOOP won\'t undo it. \"Turn gate off\" writes \'0\' again, in one tap. Only this one key is ever written; the other six your strap listed are never touched.</string>
     <string name="l10n_settings_screen_ecg_gate_turn_on">Turn gate on (write \'1\')</string>
     <string name="l10n_settings_screen_ecg_gate_turn_off">Turn gate off (write \'0\')</string>
+    <string name="l10n_settings_screen_ecg_listen_title">ECG waveform capture (WHOOP MG only)</string>
+    <string name="l10n_settings_screen_ecg_listen_blurb">Stores the strap\'s type-43 waveform records on this device for the ECG page. Listen-only: nothing is written to the strap. MG only, default off.</string>
     <string name="l10n_settings_screen_accent">Accent</string>
     <string name="l10n_settings_screen_preset">Preset</string>
     <string name="settings_language">Language</string>
@@ -2696,4 +2699,27 @@
     <string name="l10n_settings_screen_skin_temperature_fc103030">Skin temperature</string>
     <string name="l10n_health_screen_no_measured_temperature_for_these_nights_showing_the_differe_69d4efae">No measured temperature for these nights — showing the difference from your baseline. A sync re-scores recent nights and fills it in.</string>
     <string name="l10n_health_screen_only_nights_with_a_measured_temperature_are_shown_the_others_b6f7c45b">Only nights with a measured temperature are shown; the others recorded a baseline difference only.</string>
+    <!-- MG ECG page (experimental listen-only capture): descriptive readings only, never clinical. -->
+    <string name="l10n_ecg_screen_title">ECG</string>
+    <string name="l10n_ecg_screen_subtitle">Experimental waveform captures from your MG.</string>
+    <string name="l10n_ecg_screen_framing_title">Unvalidated instrumentation</string>
+    <string name="l10n_ecg_screen_framing_body">NOOP is not a medical device and this is not an ECG test. These records are shown exactly as stored: they are not a measurement, not a diagnosis, and cannot detect any heart condition. Never use them to make a health decision. If you have symptoms or are worried about your heart, talk to a doctor.</string>
+    <string name="l10n_ecg_screen_empty_title">No ECG captures yet</string>
+    <string name="l10n_ecg_screen_empty_body">To capture: open Devices, start an ECG capture on your MG, then hold the two indents on the clasp with the fingers of your other hand for about 30 seconds.</string>
+    <string name="l10n_ecg_screen_sessions">Sessions</string>
+    <string name="l10n_ecg_screen_session_meta">%1$d records · %2$d%% waveform · median HR %3$s</string>
+    <string name="l10n_ecg_screen_median_hr">%1$d bpm</string>
+    <string name="l10n_ecg_screen_no_hr">—</string>
+    <string name="l10n_ecg_screen_stat_duration">Duration</string>
+    <string name="l10n_ecg_screen_stat_coverage">Waveform</string>
+    <string name="l10n_ecg_screen_stat_median_hr">Median HR</string>
+    <string name="l10n_ecg_screen_stat_records">Records</string>
+    <string name="l10n_ecg_screen_hr_range">%1$d–%2$d bpm</string>
+    <string name="l10n_ecg_screen_duration_value">%1$ds</string>
+    <string name="l10n_ecg_screen_coverage_value">%1$d%%</string>
+    <string name="l10n_ecg_screen_records_value">%1$d</string>
+    <string name="l10n_ecg_screen_provenance">%1$s · %2$s</string>
+    <string name="l10n_ecg_screen_firmware_unknown">unknown</string>
+    <string name="l10n_ecg_screen_strip_description">Waveform strip</string>
+    <string name="l10n_health_screen_ecg">ECG</string>
 </resources>

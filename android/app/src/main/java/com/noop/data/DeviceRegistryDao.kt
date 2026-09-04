@@ -86,6 +86,8 @@ interface DeviceRegistryDao {
     @Query("DELETE FROM ppgHrSample WHERE deviceId = :deviceId") suspend fun deletePpgHrFor(deviceId: String)
     @Query("DELETE FROM ppgWaveformSample WHERE deviceId = :deviceId") suspend fun deletePpgWaveformFor(deviceId: String)
     @Query("DELETE FROM v18AuxSample WHERE deviceId = :deviceId") suspend fun deleteV18AuxFor(deviceId: String)
+    @Query("DELETE FROM ecgSession WHERE deviceId = :deviceId") suspend fun deleteEcgSessionsFor(deviceId: String)
+    @Query("DELETE FROM ecgWaveformSample WHERE deviceId = :deviceId") suspend fun deleteEcgWaveformFor(deviceId: String)
     @Query("DELETE FROM event WHERE deviceId = :deviceId") suspend fun deleteEventsFor(deviceId: String)
     @Query("DELETE FROM battery WHERE deviceId = :deviceId") suspend fun deleteBatteryFor(deviceId: String)
     @Query("DELETE FROM dailyMetric WHERE deviceId = :deviceId") suspend fun deleteDailyMetricsFor(deviceId: String)
@@ -141,6 +143,8 @@ interface DeviceRegistryDao {
     @Query("UPDATE OR IGNORE liveSession SET deviceId = :to WHERE deviceId = :from") suspend fun reKeyLiveSessions(from: String, to: String)
     @Query("UPDATE OR IGNORE dismissedWorkout SET deviceId = :to WHERE deviceId = :from") suspend fun reKeyDismissedWorkouts(from: String, to: String)
     @Query("UPDATE OR IGNORE dismissedSleep SET deviceId = :to WHERE deviceId = :from") suspend fun reKeyDismissedSleeps(from: String, to: String)
+    @Query("UPDATE OR IGNORE ecgSession SET deviceId = :to WHERE deviceId = :from") suspend fun reKeyEcgSessions(from: String, to: String)
+    @Query("UPDATE OR IGNORE ecgWaveformSample SET deviceId = :to WHERE deviceId = :from") suspend fun reKeyEcgWaveform(from: String, to: String)
 
     /** The registry row for [id], or null. (#771 adopt-serial needs the active row's fields to clone/carry.) */
     @Query("SELECT * FROM pairedDevice WHERE id = :id")

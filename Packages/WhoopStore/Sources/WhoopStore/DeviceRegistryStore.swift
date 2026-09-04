@@ -146,6 +146,10 @@ public struct DeviceRegistryStore: Sendable {
         // so forgetting that source must clear them — otherwise an imported phone's hour-by-hour step
         // history survives the delete (the same privacy defect this list exists to close).
         "appleStepHour",
+        // v42-ecg-waveform: sessions + waveform records are both deviceId-keyed (deviceId rides
+        // the sample rows redundantly, deliberately) so forgetting the source clears them too —
+        // otherwise a deleted MG's cardiac waveform survives deletion (same defect).
+        "ecgSession", "ecgWaveformSample",
     ]
 
     /// Permanently delete every recorded sample/derived row belonging to one device, across all
