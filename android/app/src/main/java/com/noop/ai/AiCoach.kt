@@ -226,7 +226,11 @@ class AiCoach(
             val (code, text) = execute(builder.build())
             if (code !in 200..299) {
                 val hint = when {
-                    code == 401 || code == 403 -> "the server refused the request (wrong or missing API key for this server)"
+                    code == 401 || code == 403 -> if (provider == AiProvider.CUSTOM && key.isNullOrBlank()) {
+                        "the request carried no API key — paste your key on the setup card and tap Refresh (typing it is not saving it)"
+                    } else {
+                        "the server refused the request (wrong API key for this server)"
+                    }
                     code == 404 -> "no /models endpoint here — check the server URL (the base, not /chat/completions)"
                     else -> "HTTP $code"
                 }
