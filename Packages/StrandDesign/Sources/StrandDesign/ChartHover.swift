@@ -1,3 +1,6 @@
+#if !os(watchOS)
+// The chart-hover toolkit (tooltips, crosshair, nearest-point) is for pointer/cursor charts the
+// watch never shows; excluded on watchOS, iOS/macOS unchanged.
 import SwiftUI
 
 // MARK: - Chart Hover Toolkit (reusable across every visualization)
@@ -52,15 +55,7 @@ public struct ChartTooltip: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(StrandPalette.surfaceOverlay)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(StrandPalette.hairlineStrong, lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.45), radius: 10, x: 0, y: 6)
+        .background(NoopPanelSurface(cornerRadius: 8, elevated: true))
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label != nil ? "\(value), \(label!)" : value)
@@ -159,19 +154,32 @@ struct HighlightDot: View {
     var diameter: CGFloat = 9
 
     var body: some View {
+        // Design Reset (WHOOP): a crisp solid dot with a clean surface ring, no blurred bloom halo.
         ZStack {
             Circle()
-                .fill(color)
-                .frame(width: diameter * 1.8, height: diameter * 1.8)
-                .blur(radius: diameter * 0.6)
-                .opacity(0.7)
-                .blendMode(.plusLighter)
-            Circle()
                 .fill(StrandPalette.surfaceBase)
-                .frame(width: diameter, height: diameter)
+                .frame(width: diameter + 3, height: diameter + 3)
             Circle()
                 .fill(color)
-                .frame(width: diameter - 3, height: diameter - 3)
+                .frame(width: diameter, height: diameter)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - "Now" end-cap
+
+/// The crisp "now" marker pinned to a trend line's latest point: a soft tinted outer ring, a brighter
+/// mid-ring, and a white core — flat, no bloom (WHOOP). Positioned by `TrendChart` inside its own plot
+/// coordinate space so it sits exactly on the curve (#458).
+struct NowCapDot: View {
+    var color: Color
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color.opacity(0.30)).frame(width: 18, height: 18)
+            Circle().fill(color.opacity(0.65)).frame(width: 11, height: 11)
+            Circle().fill(StrandPalette.tipCore).frame(width: 5, height: 5)
         }
         .allowsHitTesting(false)
     }
@@ -194,7 +202,7 @@ struct PositionedTooltip: View {
                 GeometryReader { g in
                     Color.clear
                         .onAppear { measured = g.size }
-                        .onChange(of: g.size) { measured = $0 }
+                        .onChangeCompat(of: g.size) { measured = $0 }
                 }
             )
             .position(
@@ -221,4 +229,5 @@ struct PositionedTooltip: View {
     .background(StrandPalette.surfaceBase)
     .preferredColorScheme(.dark)
 }
+#endif
 #endif

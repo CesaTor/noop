@@ -4,35 +4,42 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.noop.NoopApplication
 import com.noop.ai.AiCoach
 import com.noop.ai.AiKeyStore
 import com.noop.ai.AiProvider
 import com.noop.ai.ChatMsg
+import com.noop.ai.CustomAiAuthHeader
 import com.noop.data.WhoopDatabase
 import com.noop.data.WhoopRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 /**
  * View model for the AI Coach screen.
  *
  * Holds the [AiCoach] engine (built over the same Room-backed [WhoopRepository] the rest of
  * the app uses) and the chat state. The API key and the chosen provider/model are persisted
- * by [AiKeyStore] — the key encrypted at rest in the Android Keystore, the provider/model as
+ * by [AiKeyStore], the key encrypted at rest in the Android Keystore, the provider/model as
  * plain (non-secret) preferences.
  *
  * Privacy posture mirrors the engine: nothing is sent until the user has saved a key and asked
  * a question, and only a compact text summary of their own metrics plus their question leaves
- * the device. Errors never crash — they surface in [error].
+ * the device. Errors never crash, they surface in [error].
  */
 class CoachViewModel(app: Application) : AndroidViewModel(app) {
 
     // The networked coach, over the local store. No key is held here; the engine reads it from
     // the encrypted store at call time.
     private val aiCoach = AiCoach(
-        WhoopRepository(WhoopDatabase.get(app.applicationContext).whoopDao())
+        WhoopRepository(WhoopDatabase.get(app.applicationContext)),
+        // #1304/#512: thread the active strap id (resolved lazily by NoopApplication) so the coach reasons
+        // off the active strap's data — daysMerged/R-R/Lab markers union active ∪ canonical — instead of a
+        // hardcoded "my-whoop" that misses a strap banked under "whoop-<uuid>".
+        activeStrapId = { (app as NoopApplication).activeDeviceId },
     )
 
     // MARK: - Transcript
@@ -42,7 +49,7 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     val messages: StateFlow<List<ChatMsg>> = _messages.asStateFlow()
 
     private val _sending = MutableStateFlow(false)
-    /** True while a request is in flight — the UI disables Send and shows a thinking state. */
+    /** True while a request is in flight, the UI disables Send and shows a thinking state. */
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
@@ -77,10 +84,67 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     /** Explicit permission for the coach to read & send the user's data. Off by default. */
     val consent: StateFlow<Boolean> = _consent.asStateFlow()
 
+    // MARK: - Custom (local LLM) provider settings
+
+    private val _customBaseUrl = MutableStateFlow(AiKeyStore.readCustomBaseUrl(app.applicationContext))
+    /** Base URL for the Custom (OpenAI-compatible) provider, e.g. http://localhost:11434/v1. */
+    val customBaseUrl: StateFlow<String> = _customBaseUrl.asStateFlow()
+
+    private val _customAuthHeader = MutableStateFlow(AiKeyStore.readCustomAuthHeader(app.applicationContext))
+    /** Header used by the Custom provider when an API key is present. */
+    val customAuthHeader: StateFlow<CustomAiAuthHeader> = _customAuthHeader.asStateFlow()
+
+    private val _customConnected = MutableStateFlow(AiKeyStore.readCustomConnected(app.applicationContext))
+    /** True once the user has committed the Custom provider (entered a URL and tapped Connect). */
+    val customConnected: StateFlow<Boolean> = _customConnected.asStateFlow()
+
+    /** Update (and persist) the Custom provider's base URL as the user types. */
+    fun setCustomBaseUrl(ctx: Context, url: String) {
+        _customBaseUrl.value = url
+        AiKeyStore.saveCustomBaseUrl(ctx, url)
+    }
+
+    fun setCustomAuthHeader(ctx: Context, header: CustomAiAuthHeader) {
+        _customAuthHeader.value = header
+        AiKeyStore.saveCustomAuthHeader(ctx, header)
+    }
+
     /** Grant or revoke data access; persisted. */
     fun setConsent(ctx: Context, value: Boolean) {
         _consent.value = value
         AiKeyStore.saveConsent(ctx, value)
+    }
+
+    // MARK: - Editable system prompt
+
+    private val _systemPrompt = MutableStateFlow(
+        AiCoach.resolveSystemPrompt(app.applicationContext)
+    )
+    /**
+     * The Coach's system prompt as currently shown in the editor: the user's stored override, or the
+     * built-in default when nothing custom is set. Read fresh by the engine per send (see
+     * [AiCoach.resolveSystemPrompt]); this flow just backs the editor UI.
+     */
+    val systemPrompt: StateFlow<String> = _systemPrompt.asStateFlow()
+
+    private val _hasCustomPrompt = MutableStateFlow(
+        NoopPrefs.coachSystemPrompt(app.applicationContext).isNotBlank()
+    )
+    /** True when an edited prompt differs from the default, gates the "Reset to default" control. */
+    val hasCustomPrompt: StateFlow<Boolean> = _hasCustomPrompt.asStateFlow()
+
+    /** Persist the edited [prompt] (blank clears it back to default) and reflect it in the editor. */
+    fun setSystemPrompt(ctx: Context, prompt: String) {
+        NoopPrefs.setCoachSystemPrompt(ctx, prompt)
+        _systemPrompt.value = prompt
+        _hasCustomPrompt.value = prompt.isNotBlank() && prompt.trim() != AiCoach.DEFAULT_SYSTEM_PROMPT
+    }
+
+    /** Restore the built-in default prompt by clearing any override. */
+    fun resetSystemPrompt(ctx: Context) {
+        NoopPrefs.setCoachSystemPrompt(ctx, "")
+        _systemPrompt.value = AiCoach.DEFAULT_SYSTEM_PROMPT
+        _hasCustomPrompt.value = false
     }
 
     // Bumped whenever the stored key changes so the UI recomposes its setup/chat gate.
@@ -92,6 +156,13 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
 
     /** True when a non-blank API key is stored. The UI shows the chat only when this is true. */
     fun hasKey(ctx: Context): Boolean = AiKeyStore.hasKey(ctx)
+
+    /**
+     * True once the coach can actually send: a stored key for the cloud providers, or, for the
+     * Custom (local) provider, a committed base URL (a key is optional there). Gates setup vs. chat.
+     */
+    fun isConfigured(ctx: Context): Boolean =
+        if (_provider.value == AiProvider.CUSTOM) _customConnected.value else hasKey(ctx)
 
     // MARK: - Selection mutators
 
@@ -134,20 +205,38 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         if (_refreshingModels.value) return
         val appCtx = ctx.applicationContext
         val p = _provider.value
+        val url = _customBaseUrl.value
         _refreshingModels.value = true
         viewModelScope.launch {
             try {
-                val live = aiCoach.fetchModels(appCtx, p)
+                val live = aiCoach.fetchModels(appCtx, p, url, _customAuthHeader.value)
                 if (p == _provider.value) {
                     val merged = (_availableModels.value + live).distinct()
                     _availableModels.value = merged
+                    // For Custom there's no curated/default model, adopt the first the server lists.
+                    if (p == AiProvider.CUSTOM && _model.value.isBlank() && merged.isNotEmpty()) {
+                        selectModel(appCtx, merged.first())
+                    }
                 }
             } catch (_: Exception) {
-                // Best-effort — keep whatever list we already have.
+                // Best-effort, keep whatever list we already have.
             } finally {
                 _refreshingModels.value = false
             }
         }
+    }
+
+    /**
+     * Commit the Custom (local) provider once a server URL is entered: persist the committed flag
+     * (so the chat unlocks without a key) and pull the server's model list, adopting the first.
+     */
+    fun connectCustom(ctx: Context) {
+        if (_customBaseUrl.value.isBlank()) return
+        val appCtx = ctx.applicationContext
+        _customConnected.value = true
+        AiKeyStore.saveCustomConnected(appCtx, true)
+        _error.value = null
+        refreshModels(appCtx)
     }
 
     // MARK: - Key management
@@ -157,19 +246,49 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         AiKeyStore.save(ctx, key)
         _error.value = null
         _keyVersion.value += 1
-        // Pull the user's ACTUAL current models from the provider so the picker is never stale.
-        refreshModels(ctx)
+        // #288: do NOT auto-fetch the provider's model list on key-save. For a cloud provider that GET hits
+        // the provider the MOMENT a key is saved (leaking IP + request timing + key-validity) — before the
+        // user has sent anything, in an app that is zero-network by default. The picker shows the curated
+        // shipped models (seedModels); the LIVE list is pulled only when the user taps Refresh (an explicit
+        // action that is its own consent) or sends. Local Custom servers still refresh on Connect.
     }
 
     /** Clear the stored key and reset the transcript back to the setup screen. */
     fun clearKey(ctx: Context) {
         AiKeyStore.clear(ctx)
         _messages.value = emptyList()
+        // The day belongs to the transcript, so it goes with it. Harmless if left (a stale day only ever
+        // clears an already-empty list) but it would be a field claiming something untrue.
+        conversationDay = null
+        _error.value = null
+        _keyVersion.value += 1
+    }
+
+    /**
+     * Disconnect entirely: forget any stored key AND un-commit the Custom provider, returning to
+     * the setup screen. The Custom base URL is kept so reconnecting pre-fills it.
+     */
+    fun disconnect(ctx: Context) {
+        AiKeyStore.clear(ctx)
+        _customConnected.value = false
+        AiKeyStore.saveCustomConnected(ctx, false)
+        _messages.value = emptyList()
+        conversationDay = null
         _error.value = null
         _keyVersion.value += 1
     }
 
     // MARK: - Send
+
+    /** Local day ([LocalDate.toEpochDay]) the current transcript was last written on; null while it is
+     *  empty. Drives the day boundary in [send] — see [isStaleConversation]. */
+    private var conversationDay: Long? = null
+
+    /** Append [msg] to the transcript, trimming to the newest [MAX_STORED_MESSAGES] so the in-memory list
+     *  (and the Compose transcript) stays bounded over a long-lived session. (parity with Swift) */
+    private fun appendMessage(msg: ChatMsg) {
+        _messages.value = (_messages.value + msg).takeLast(MAX_STORED_MESSAGES)
+    }
 
     /**
      * Send [text] as the next user turn: append it, call the coach, then append the reply.
@@ -179,9 +298,23 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         val question = text.trim()
         if (question.isEmpty() || _sending.value) return
 
+        // A transcript from an earlier local day is retired before the new turn is appended. The
+        // ViewModel outlives a night (Android keeps the process around for days), so without this the
+        // coach answers TODAY's question inside YESTERDAY's conversation: buildContext() re-reads the
+        // store on every send, so the numbers are current, but the assistant's own earlier turns state
+        // yesterday's figures and the model stays consistent with them. Reported as "the coach only
+        // talks about my imported data" after a night of fresh strap data — force-quitting the app
+        // (which destroys the ViewModel) was the only cure. MAX_STORED_MESSAGES bounds the transcript's
+        // SIZE; this bounds its AGE.
+        val today = LocalDate.now().toEpochDay()
+        if (isStaleConversation(conversationDay, today)) {
+            _messages.value = emptyList()
+        }
+        conversationDay = today
+
         val appCtx = ctx.applicationContext
         _error.value = null
-        _messages.value = _messages.value + ChatMsg(role = "user", text = question)
+        appendMessage(ChatMsg(role = "user", text = question))
         _sending.value = true
 
         viewModelScope.launch {
@@ -192,8 +325,13 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
                     provider = _provider.value,
                     model = _model.value,
                     consent = _consent.value,
+                    customBaseUrl = _customBaseUrl.value,
+                    customAuthHeader = _customAuthHeader.value,
+                    // v5: only include the on-device-signals summary when BOTH the data consent is on AND
+                    // the second opt-in is set (summary-only, no raw egress, see AiCoach.buildSignalsContext).
+                    includeSignals = _consent.value && NoopPrefs.coachSignals(appCtx),
                 )
-                _messages.value = _messages.value + ChatMsg(role = "assistant", text = reply)
+                appendMessage(ChatMsg(role = "assistant", text = reply))
             } catch (e: Exception) {
                 _error.value = e.message ?: "Something went wrong. Please try again."
             } finally {
@@ -209,11 +347,37 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         /**
+         * Hard rolling cap on the STORED transcript. The network payload is separately windowed inside
+         * [AiCoach]; this bounds the in-memory [_messages] list — and the Compose transcript rendered from
+         * it — so a long-lived session can't grow it without bound. The ViewModel survives tab-switching,
+         * so before this an active chat grew until the process was killed: the "gets laggy the longer the
+         * app runs, reopening fixes it, feels like RAM" report. Cap >> the wire window, so it never changes
+         * what's sent. (parity with Swift `maxStoredMessages`)
+         */
+        private const val MAX_STORED_MESSAGES = 40
+
+        /**
+         * True when a transcript last written on [lastEpochDay] should be retired before a question
+         * asked on [todayEpochDay] — i.e. the conversation crossed into a new local day.
+         *
+         * STRICTLY forward (`>`), never `!=`: a clock that moves BACKWARDS — the user flying west, a
+         * timezone change, an NTP correction — must not wipe a conversation the user is in the middle
+         * of. Only real elapsed days retire a transcript; going back in time leaves it alone.
+         *
+         * Null [lastEpochDay] (nothing sent yet this session) is never stale. Pure companion so the
+         * rule is pinned by [com.noop.ui.CoachConversationDayTest] without a ViewModel or a framework.
+         */
+        internal fun isStaleConversation(lastEpochDay: Long?, todayEpochDay: Long): Boolean =
+            lastEpochDay != null && todayEpochDay > lastEpochDay
+
+        /**
          * Initial model list for [provider]: its curated ids, plus [selected] appended if it's a
          * custom id not already in that list (so a previously-saved custom model still shows).
          */
-        private fun seedModels(provider: AiProvider, selected: String): List<String> =
-            if (provider.models.contains(selected)) provider.models
-            else provider.models + selected
+        private fun seedModels(provider: AiProvider, selected: String): List<String> = when {
+            selected.isBlank() -> provider.models          // Custom has no default, start empty
+            provider.models.contains(selected) -> provider.models
+            else -> provider.models + selected
+        }
     }
 }

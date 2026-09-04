@@ -1,10 +1,13 @@
+#if !os(watchOS)
+// Sparkline uses .onContinuousHover + ChartHover helpers (unavailable on watchOS); the watch
+// doesn't draw sparklines, so the whole view is excluded there. iOS/macOS unchanged.
 import SwiftUI
 
 // MARK: - Sparkline (§9.4 Today / Live HR tile)
 //
 // A tiny inline line for live HR (or any short numeric series). Gradient-stroked,
-// with an optional glowing leading dot at the latest sample and a faint area
-// wash. Designed to sit in a card/tile or the menu-bar popover.
+// with an optional crisp leading dot at the latest sample and a faint area
+// wash (WHOOP-flat: no bloom). Designed to sit in a card/tile or the menu-bar popover.
 
 public struct Sparkline: View {
 
@@ -62,36 +65,51 @@ public struct Sparkline: View {
         return (lo - pad, hi + pad)
     }
 
+    /// The area-wash top colour (gradient sampled at 0.7, dimmed). Computed once per body eval instead of
+    /// re-sampling the gradient inside the ZStack on every draw.
+    private var areaWashColor: Color {
+        StrandPalette.sample(stops: gradient.stops, at: 0.7).opacity(0.22)
+    }
+    /// The head-dot ring colour (gradient sampled at its bright end). Computed once per body eval.
+    private var headColor: Color {
+        StrandPalette.sample(stops: gradient.stops, at: 1.0)
+    }
+
     public var body: some View {
         GeometryReader { geo in
             let pts = points(in: geo.size)
             ZStack {
-                if showsArea, pts.count > 1 {
-                    areaPath(pts, in: geo.size)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    StrandPalette.sample(stops: gradient.stops, at: 0.7).opacity(0.22),
-                                    Color.clear
-                                ],
-                                startPoint: .top, endPoint: .bottom
+                // STATIC LAYER: area wash + gradient line + head dot. Drawn INLINE — NO .drawingGroup().
+                // A ~14-point polyline + fill + 2 dots is trivially cheap, and a per-sparkline offscreen
+                // flatten costs FAR more (a dedicated MTLTexture + an extra composite pass) than it saves.
+                // Today shows ~10-16 tiles at once, so per-tile .drawingGroup() piled up ~16 offscreen
+                // passes that re-rasterised on every scroll / body re-eval — the v7.0.2 lag regression.
+                // CoreAnimation already caches this flat layer natively.
+                ZStack {
+                    if showsArea, pts.count > 1 {
+                        areaPath(pts, in: geo.size)
+                            .fill(
+                                LinearGradient(
+                                    colors: [areaWashColor, Color.clear],
+                                    startPoint: .top, endPoint: .bottom
+                                )
                             )
-                        )
-                }
-                if pts.count > 1 {
-                    linePath(pts)
-                        .stroke(
-                            LinearGradient(gradient: gradient, startPoint: .leading, endPoint: .trailing),
-                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
-                        )
-                }
-                if showsHead, let head = pts.last {
-                    let c = StrandPalette.sample(stops: gradient.stops, at: 1.0)
-                    Circle().fill(c).frame(width: lineWidth * 3.2, height: lineWidth * 3.2)
-                        .blur(radius: lineWidth * 1.2).opacity(0.8).blendMode(.plusLighter)
-                        .position(head)
-                    Circle().fill(Color.white).frame(width: lineWidth * 1.6, height: lineWidth * 1.6)
-                        .position(head)
+                    }
+                    if pts.count > 1 {
+                        linePath(pts)
+                            .stroke(
+                                LinearGradient(gradient: gradient, startPoint: .leading, endPoint: .trailing),
+                                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+                            )
+                    }
+                    if showsHead, let head = pts.last {
+                        // Design Reset (WHOOP): a crisp solid leading dot, no blurred bloom halo.
+                        // The line colour reads as the head ring; a small core sits inside it.
+                        Circle().fill(headColor).frame(width: lineWidth * 2.2, height: lineWidth * 2.2)
+                            .position(head)
+                        Circle().fill(StrandPalette.tipCore).frame(width: lineWidth * 1.0, height: lineWidth * 1.0)
+                            .position(head)
+                    }
                 }
 
                 // Hover affordance: crosshair + highlighted sample + tooltip.
@@ -123,7 +141,20 @@ public struct Sparkline: View {
                 case .ended: hoverX = nil
                 }
             }
+            // The line is pointer-hover only (dead on touch); give VoiceOver a
+            // spoken summary of the series so the trend isn't silent on iPhone.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(axSummary))
         }
+    }
+
+    /// A spoken summary of the series for VoiceOver: count + latest/low/high,
+    /// formatted via the same `valueFormat` closure so units match the call site.
+    private var axSummary: String {
+        guard let last = values.last, let lo = values.min(), let hi = values.max() else {
+            return String(localized: "No data", bundle: .module)
+        }
+        return String(localized: "Trend, \(values.count) points, latest \(valueFormat(last)), low \(valueFormat(lo)), high \(valueFormat(hi))", bundle: .module)
     }
 
     /// The gradient colour at a sample's normalized position along the line.
@@ -193,7 +224,8 @@ private func sampleHR() -> [Double] {
     }
     .padding(24)
     .frame(width: 380, height: 240)
-    .background(StrandPalette.surfaceRaised)
+    .background(NoopChromeSurface())
     .preferredColorScheme(.dark)
 }
+#endif
 #endif

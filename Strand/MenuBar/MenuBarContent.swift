@@ -19,11 +19,13 @@ import WhoopStore
 public struct MenuBarLabel: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var live: LiveState
+    @EnvironmentObject private var model: AppModel
 
     public init() {}
 
-    /// HR to display: reported value when >0, else derived from the latest R-R.
+    /// HR to display: the spike-filtered median (model.bpm, #39) when available, else reported, else R-R.
     private var displayHR: Int? {
+        if let hr = model.bpm, hr > 0 { return hr }
         if let hr = live.heartRate, hr > 0 { return hr }
         if let last = live.rr.last, last > 0 { return Int((60_000.0 / Double(last)).rounded()) }
         return nil
@@ -58,7 +60,7 @@ public struct MenuBarLabel: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(dotColor)
             Text(displayHR.map(String.init) ?? "—")
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .font(StrandFont.rounded(12, weight: .semibold))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(displayHR.map { "Heart rate \($0) beats per minute" } ?? "Strap not connected")
@@ -72,12 +74,16 @@ public struct MenuBarContent: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var model: AppModel
+    /// The menu-bar popover is a SEPARATE scene from the main window, so it doesn't inherit the
+    /// window's appearance — drive it from the same setting directly.
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
 
     public init() {}
 
     // MARK: Derived values
 
     private var displayHR: Int? {
+        if let hr = model.bpm, hr > 0 { return hr }        // #39: spike-filtered median, not raw
         if let hr = live.heartRate, hr > 0 { return hr }
         if let last = live.rr.last, last > 0 { return Int((60_000.0 / Double(last)).rounded()) }
         return nil
@@ -85,12 +91,18 @@ public struct MenuBarContent: View {
 
     private var recovery: Double? { repo.today?.recovery }
 
+    /// True when the pill should read the green "STREAMING" state. A live Oura ring has no WHOOP-style
+    /// encrypted bond, so it signals via `streamingLiveHR`; the WHOOP path still keys off `bonded` (its
+    /// encrypted-bond + buzz semantics). Either one being true means HR is actively streaming.
+    private var isStreaming: Bool { live.streamingLiveHR || live.bonded }
+
     private var connectionTone: StrandTone {
-        live.bonded ? .positive : live.connected ? .accent : .critical
+        isStreaming ? .positive : live.connected ? .accent : .critical
     }
 
     private var connectionTitle: String {
-        live.bonded ? "STREAMING" : live.connected ? "CONNECTED" : "OFFLINE"
+        isStreaming ? String(localized: "STREAMING")
+            : live.connected ? String(localized: "CONNECTED") : String(localized: "OFFLINE")
     }
 
     private var batteryTone: StrandTone {
@@ -120,12 +132,13 @@ public struct MenuBarContent: View {
             Divider().overlay(StrandPalette.hairline)
             statsRow
             Divider().overlay(StrandPalette.hairline)
+            syncLine
             actions
         }
         .padding(16)
         .frame(width: 268)
-        .background(StrandPalette.surfaceOverlay)
-        .preferredColorScheme(.dark)
+        .background(NoopChromeSurface())
+        .preferredColorScheme(AppearanceMode.resolve(appearanceRaw).colorScheme)
     }
 
     // MARK: Header
@@ -142,7 +155,7 @@ public struct MenuBarContent: View {
                     .foregroundStyle(StrandPalette.textTertiary)
             }
             Spacer(minLength: 8)
-            StatePill(connectionTitle, tone: connectionTone, pulsing: live.bonded)
+            StatePill("\(connectionTitle)", tone: connectionTone, pulsing: live.bonded)
         }
     }
 
@@ -240,17 +253,46 @@ public struct MenuBarContent: View {
             .frame(width: 1, height: 26)
     }
 
+    // MARK: Sync status
+
+    /// Honest sync line (ports the Android Live line, ed6a31d): pulsing pill while an offload runs,
+    /// the stalled-offload error if the last one died, else "History synced N ago". The popover body
+    /// is rebuilt on every open, so the relative label is fresh without a timer.
+    ///
+    /// The slot always reserves its height, even with nothing to say (never synced, no error): the
+    /// MenuBarExtra panel animates every height change, so the pill<->text<->empty swaps (sync state
+    /// lands right after first layout; `backfilling` toggles per offload chunk) made the popover
+    /// visibly slide into place from the corner on open and bounce while open. Pinning a constant
+    /// 24pt height stops the panel resizing under those swaps. A rare multi-line error may still grow it.
+    private var syncLine: some View {
+        ZStack(alignment: .leading) {
+            if live.backfilling {
+                StatePill("Syncing strap history…", tone: .accent, pulsing: true)
+            } else if let error = live.lastSyncError {
+                Text(error)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.statusWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let at = live.lastSyncedAt {
+                Text("History synced \(relativeAgo(at))")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+        }
+        .frame(minHeight: 24, alignment: .leading)
+    }
+
     // MARK: Actions
 
     private var actions: some View {
         VStack(spacing: 8) {
             if live.bonded {
                 menuButton(
-                    live.heartRate != nil ? "Stop live feed" : "Start live feed",
-                    systemImage: live.heartRate != nil ? "pause.fill" : "play.fill",
+                    live.liveFeedActive ? "Stop live feed" : "Start live feed",
+                    systemImage: live.liveFeedActive ? "pause.fill" : "play.fill",
                     tone: .accent
                 ) {
-                    if live.heartRate != nil { model.stopRealtimeHR() } else { model.startRealtimeHR() }
+                    if live.liveFeedActive { model.stopRealtimeHR() } else { model.startRealtimeHR() }
                 }
             } else {
                 menuButton(

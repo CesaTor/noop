@@ -161,6 +161,18 @@ func registerPostHooks() {
         guard 7 <= payEnd else { return }
         let pay = Array(frame[7..<payEnd])
         fb.region(7, length, "response payload", "cmd")
+        // The origin-seq echo and the result code (#894). Kotlin has published both on this family since
+        // #791 and on 5/MG since the port; Swift published neither, so an Apple strap log could not say
+        // whether a command the app sent succeeded — and every probe that needed the answer re-derived
+        // this byte privately (FeatureFlagProbe.resultLabel, DeviceConfigReadProbe, BodyLocationProbe).
+        //
+        // Read from `pay`, not the raw frame, so a response too short to carry them decodes nothing
+        // rather than reporting CRC32 bytes as a result code. Same offsets and the same
+        // `"NAME(raw)"` rendering as the Kotlin twin, so the two platforms' logs are comparable.
+        if pay.count >= 1 { fb.add(7, 1, "resp_seq", "cmd", value: .int(Int(pay[0]))) }
+        if pay.count >= 2 {
+            fb.add(8, 1, "result", "cmd", value: .string(schema.enumName("CommandResult", Int(pay[1]))))
+        }
         let cmd = frame.count > 6 ? Int(frame[6]) : nil
         let name = cmd.flatMap { schema.enums["CommandNumber"]?[String($0)] }
         switch name {
@@ -294,7 +306,48 @@ func registerPostHooks() {
         let spec = schema.packet(forType: Int(frame[4]))
         let version = Int(frame[5])
         fb.parsed["hist_version"] = .int(version)
-        guard let entry = spec.flatMap({ schema.resolveVersion($0.versions, version) }) else {
+
+        // WHOOP 4.0 **v25** historical layout (issue #30). Reverse-engineered from 45 real records on
+        // v1.92+ full dumps (faklei / FrankdeJong / tchoucker15): an 84-byte record with `unix` @11
+        // (u32 LE) and the DSP gravity vector at @73/75/77 as 3×i16 LE / 16384 — |gravity| ≈ 1 g on
+        // 45/45 records (resting 0.94–0.99 g). Bytes 23–72 are the optical PPG waveform; per-second HR
+        // is NOT stored in v25 (it's PPG-derived), so this yields **motion + timestamp** — exactly what
+        // the sleep stager gates on (it returns no stages without gravity). Additive + version-gated,
+        // so v18/v24/v26 straps are untouched.
+        if version == 25, frame.count >= 79 {
+            if let unix = u32(frame, 11) {
+                fb.add(11, 4, "unix", "time", value: .int(Int(unix)), note: "real unix seconds")
+                fb.parsed["unix"] = .int(Int(unix))
+            }
+            func grav(_ off: Int) -> Double? {
+                guard let u = u16(frame, off) else { return nil }
+                return Double(u >= 32768 ? u - 65536 : u) / 16384.0   // i16 LE, ±2 g full-scale
+            }
+            if let gx = grav(73), let gy = grav(75), let gz = grav(77) {
+                let mag = (gx * gx + gy * gy + gz * gz).squareRoot()
+                if (0.5...1.5).contains(mag) {   // a real DSP orientation vector is ~1 g; reject garbage
+                    fb.add(73, 2, "gravity_x", "accel", value: .double(gx), note: "g")
+                    fb.add(75, 2, "gravity_y", "accel", value: .double(gy), note: "g")
+                    fb.add(77, 2, "gravity_z", "accel", value: .double(gz), note: "g")
+                    fb.parsed["gravity_x"] = .double(gx)
+                    fb.parsed["gravity_y"] = .double(gy)
+                    fb.parsed["gravity_z"] = .double(gz)
+                }
+            }
+            fb.parsed["rr_intervals"] = .intArray([])
+            fb.region(23, 73, "PPG waveform (optical)", "ppg")
+            return
+        }
+
+        let mapped = spec.flatMap { schema.resolveVersion($0.versions, version) }
+        // Unmapped firmware version: instead of dropping the whole record (→ no HR/R-R/GRAVITY → sleep
+        // can never compute from the strap, issue #30), fall back to the canonical v24 DSP layout —
+        // firmware versions overwhelmingly share it (the schema notes V12 == V24). We then accept it
+        // ONLY if it decodes to something physically real (validated after the field decode below): a
+        // wrong layout yields random f32 gravity whose magnitude is nowhere near 1 g, so it's rejected
+        // and the record is left raw. Mapped versions are unaffected.
+        let usingFallback = (mapped == nil)
+        guard let entry = mapped ?? spec.flatMap({ schema.resolveVersion($0.versions, 24) }) else {
             fb.region(7, length, "HISTORICAL_DATA v\(version) (unmapped layout)", "unknown")
             return
         }
@@ -329,6 +382,26 @@ func registerPostHooks() {
             }
         }
         fb.parsed["rr_intervals"] = .intArray(rrVals)
+
+        // Validate the v24-layout guess for an unmapped version: gravity is the DSP-separated
+        // orientation vector, so |gravity| ≈ 1 g on a real record regardless of motion. If the magnitude
+        // isn't ~1 g (or HR is implausible), the layout doesn't fit this firmware — drop the decoded
+        // biometrics so nothing garbage is stored, and leave the record raw (the Backfiller then logs the
+        // unmapped version, issue #30). Mapped versions skip this entirely.
+        if usingFallback {
+            let gx = fb.parsed["gravity_x"]?.doubleValue ?? Double.nan
+            let gy = fb.parsed["gravity_y"]?.doubleValue ?? Double.nan
+            let gz = fb.parsed["gravity_z"]?.doubleValue ?? Double.nan
+            let mag = (gx * gx + gy * gy + gz * gz).squareRoot()
+            let hr = fb.parsed["heart_rate"]?.intValue ?? 0
+            if !((0.8...1.2).contains(mag) && (25...230).contains(hr)) {
+                for k in ["heart_rate", "rr_count", "rr_intervals",
+                          "gravity_x", "gravity_y", "gravity_z", "unix", "subseconds"] {
+                    fb.parsed.removeValue(forKey: k)
+                }
+                fb.region(7, length, "HISTORICAL_DATA v\(version) (unmapped; v24 layout rejected)", "unknown")
+            }
+        }
     }
 
     postHooks["metadata"] = { fb, frame, length, _ in

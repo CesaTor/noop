@@ -2,7 +2,7 @@
 
 NOOP is a standalone, fully **offline** companion app for WHOOP straps (4.0 and
 5.0). It pairs directly with the user's own strap over Bluetooth — **no WHOOP
-cloud, account, or subscription** — stores everything on-device in SQLite, can
+cloud or account** — stores everything on-device in SQLite, can
 import WHOOP CSV and Apple Health exports, and computes recovery, strain, HRV,
 and sleep locally.
 
@@ -19,7 +19,7 @@ independently of the reference macOS app.
 
 ## Credits
 
-These packages build on prior open-source reverse-engineering and
+These packages build on prior community reverse-engineering and
 interoperability work:
 
 - **`johnmiddleton12/my-whoop`** — the WHOOP 4.0 BLE framing, command/decode,
@@ -65,8 +65,10 @@ StrandDesign   (standalone — SwiftUI only, no internal deps)
 
 The reference app target (`Strand/`, macOS SwiftUI) is the integration layer: it
 owns the CoreBluetooth transport, wraps the protocol library's UUID *strings* in
-`CBUUID`, and wires the pure packages together. iOS and Android apps are
-planned; the pure packages are already iOS-ready.
+`CBUUID`, and wires the pure packages together. The macOS and iOS reference apps
+(the iOS target is build-from-source only) consume these packages directly, and
+an Android app ships alongside them; the pure packages run unchanged across macOS
+and iOS.
 
 ---
 
@@ -243,6 +245,7 @@ busy timeout so two handles to the same file don't deadlock.
 | `sleepSession`, `dailyMetric` | cached derived metrics | `(deviceId, startTs)` / `(deviceId, day)` |
 | `journal`, `workout`, `appleDaily` | journal + workouts + Apple-Health daily | various |
 | `metricSeries` | generic long-format (EAV) metric store | `(deviceId, day, key)` |
+| `scoreInputProvenance` | input provider for a NOOP-computed score | `(deviceId, day, key)` |
 
 ### Key public API
 

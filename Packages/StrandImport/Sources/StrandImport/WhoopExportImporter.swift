@@ -12,13 +12,112 @@ import ZIPFoundation
 /// located **by filename**, case-insensitively, anywhere in the tree.
 public struct WhoopExportImporter {
 
-    public init() {}
+    /// Aggregate ceiling on the bytes held in RAM across ALL retained CSVs from one import. The per-entry
+    /// cap (`maxEntryBytes`) bounds a single file, but NOT the sum of the retained set — this backstops a
+    /// crafted export from accumulating unbounded `Data` in the result dict. A real Whoop bundle is a few
+    /// MB, so 1 GB never trips in practice. Injectable so tests can exercise the budget with tiny inputs.
+    let maxTotalBytes: Int
+
+    public init(maxTotalBytes: Int = 1 << 30) { self.maxTotalBytes = maxTotalBytes }
+
+    // MARK: - Strain → Effort rescale (Charge/Effort/Rest redesign, 2026-06-12)
+
+    /// WHOOP reports "Day Strain" on its own 0–21 logarithmic scale. NOOP's "Effort" score lives on a
+    /// 0–100 scale (StrainScorer.maxStrain = 100), so an imported Day Strain must be rescaled by
+    /// 100/21 before it is written into the `strain` metric series / `DailyMetric.strain`, otherwise
+    /// imported history would sit a fifth as high as live-computed Effort.
+    ///
+    /// This is applied at the WRITE boundary (WhoopImporter → store) — NOT at parse time — so the
+    /// verbatim parsed value (`WhoopCycleRow.dayStrain`) and the CSV round-trip contract are preserved.
+    /// Keep this factor byte-identical to the Android importer (WhoopCsvImporter.kt).
+    public static let dayStrainToEffortScale = 100.0 / 21.0
+
+    /// Rescale an imported WHOOP Day Strain (0–21) onto NOOP's 0–100 Effort axis. `nil` passes through.
+    public static func effortFromImportedDayStrain(_ dayStrain: Double?) -> Double? {
+        guard let dayStrain else { return nil }
+        return dayStrain * dayStrainToEffortScale
+    }
+
+    /// Inverse: convert NOOP's internal 0–100 Effort back onto WHOOP's 0–21 Day Strain scale for a
+    /// WHOOP-format CSV export. Keeps the CSV genuinely WHOOP-compatible AND makes a NOOP export →
+    /// NOOP import round-trip lossless (export ÷scale, then import ×scale restores the value).
+    public static func whoopDayStrainFromEffort(_ effort: Double?) -> Double? {
+        guard let effort else { return nil }
+        return effort / dayStrainToEffortScale
+    }
+
+    /// WHOOP CSVs carry "Sleep efficiency %" on a 0–100 scale; NOOP's `efficiency` columns store the
+    /// 0–1 fraction the native pipeline writes (`AnalyticsEngine`: actual-sleep ÷ in-bed). Convert at
+    /// the WRITE boundary (WhoopImporter → store), NOT at parse time, so the verbatim parsed value
+    /// (`sleepEfficiencyPct`) and the CSV round-trip contract are preserved — the same shape as the
+    /// Day Strain ⇄ Effort pair above. Keep byte-identical to the Android importer (WhoopCsvImporter.kt).
+    public static func fractionFromImportedEfficiencyPct(_ pct: Double?) -> Double? {
+        guard let pct else { return nil }
+        return pct / 100.0
+    }
+
+    /// Inverse: the stored 0–1 fraction back onto the CSV's 0–100 "Sleep efficiency %" column, so an
+    /// exported CSV is WHOOP-compatible and a NOOP export → NOOP import round-trip is lossless to
+    /// 4 decimal places of a percent (1e-6 of the fraction). The rounding matters: `num()` prints
+    /// shortest-round-trip Doubles, and a raw `fraction * 100` carries FP dust (0.923 × 100 =
+    /// 92.30000000000001) straight into the CSV cell.
+    public static func whoopEfficiencyPctFromFraction(_ fraction: Double?) -> Double? {
+        guard let fraction else { return nil }
+        return (fraction * 100.0 * 10_000).rounded() / 10_000
+    }
 
     // Recognised CSV filenames (lowercased).
     private static let cyclesName  = "physiological_cycles.csv"
     private static let sleepsName  = "sleeps.csv"
     private static let workoutsName = "workouts.csv"
     private static let journalName = "journal_entries.csv"
+
+    /// Map a known localized WHOOP export filename to its canonical English name. WHOOP localizes
+    /// the CSV filenames in non-English exports (issue #3): a German export ships Schlaf.csv,
+    /// Trainings.csv, physiologische_zyklen.csv, and logbuch_eintraege.csv.
+    private static func localizedAlias(_ base: String) -> String? {
+        switch base {
+        case "physiologische_zyklen.csv": return cyclesName   // German (app.whoop.com → Daten exportieren)
+        case "schlaf.csv":                return sleepsName
+        case "trainings.csv":             return workoutsName
+        case "logbuch_eintraege.csv":     return journalName
+        // Spanish (issue #76): physiological_cycles.csv keeps its English name, but sleep/workouts are
+        // renamed. Folded + unfolded variants since the filename is lowercased but not diacritic-folded.
+        case "sueño.csv", "sueno.csv":    return sleepsName
+        case "entrenamientos.csv":        return workoutsName
+        // French (issue #79): physiological_cycles.csv keeps its English name; sleep/workouts renamed.
+        case "sommeil.csv":               return sleepsName
+        case "entrainements.csv", "entraînements.csv": return workoutsName
+        // Brazilian Portuguese (issue #692): unlike es/fr, WHOOP localizes ALL FOUR filenames here,
+        // cycles included. Names taken from a real pt-BR export. Folded + unfolded variants because the
+        // filename is lowercased but not diacritic-folded; header sniffing is the backstop if it mojibakes.
+        case "ciclos_fisiológicos.csv", "ciclos_fisiologicos.csv": return cyclesName
+        case "sonos.csv":                 return sleepsName
+        case "treinos.csv":               return workoutsName
+        case "entradas_diário.csv", "entradas_diario.csv": return journalName
+        default:                          return nil
+        }
+    }
+
+    /// Classify a CSV by its header columns when the filename is unrecognised. Covers any language
+    /// whose column headers stay English even when the filenames are translated.
+    private static func sniffKind(_ data: Data) -> String? {
+        let h = Set(CSVTable(data: data).normalizedHeaders)
+        if h.contains("activity_name") || h.contains("workout_start_time") { return workoutsName }
+        if h.contains("question_text") || h.contains("answered_yes_no") || h.contains("question") { return journalName }
+        if h.contains("nap") && (h.contains("sleep_onset") || h.contains("wake_onset")) { return sleepsName }
+        if h.contains("cycle_start_time") || h.contains("recovery_score_pct") || h.contains("day_strain") { return cyclesName }
+        if h.contains("sleep_onset") || h.contains("asleep_duration_min") { return sleepsName }
+        return nil
+    }
+
+    /// Canonical key for a candidate CSV: exact English name, then a localized alias, then content.
+    private static func canonicalKey(base: String, data: Data) -> String? {
+        let wanted: Set<String> = [cyclesName, sleepsName, workoutsName, journalName]
+        if wanted.contains(base) { return base }
+        if let a = localizedAlias(base) { return a }
+        return sniffKind(data)
+    }
 
     // MARK: - Public entry point
 
@@ -77,7 +176,7 @@ public struct WhoopExportImporter {
     private func loadFromFolder(_ folder: URL) throws -> [String: Data] {
         let fm = FileManager.default
         var result: [String: Data] = [:]
-        let wanted: Set<String> = [Self.cyclesName, Self.sleepsName, Self.workoutsName, Self.journalName]
+        var total = 0
 
         guard let enumerator = fm.enumerator(
             at: folder,
@@ -88,12 +187,16 @@ public struct WhoopExportImporter {
         }
 
         for case let fileURL as URL in enumerator {
-            let name = fileURL.lastPathComponent.lowercased()
-            guard wanted.contains(name), result[name] == nil else { continue }
+            let base = fileURL.lastPathComponent.lowercased()
+            guard base.hasSuffix(".csv") else { continue }   // skip GPX/ECG/etc.
             let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if size > Self.maxEntryBytes { continue }   // refuse an implausibly large CSV
-            if let data = try? Data(contentsOf: fileURL) {
-                result[name] = data
+            guard let data = try? Data(contentsOf: fileURL) else { continue }
+            // Route by English name, localized filename alias, then header content (issue #3).
+            if let key = Self.canonicalKey(base: base, data: data), result[key] == nil {
+                if total + data.count > maxTotalBytes { break }   // aggregate RAM ceiling across retained CSVs
+                result[key] = data
+                total += data.count
             }
         }
         return result
@@ -112,12 +215,12 @@ public struct WhoopExportImporter {
         }
 
         var result: [String: Data] = [:]
-        let wanted: Set<String> = [Self.cyclesName, Self.sleepsName, Self.workoutsName, Self.journalName]
+        var total = 0
 
         for entry in archive {
             guard entry.type == .file else { continue }
-            let name = (entry.path as NSString).lastPathComponent.lowercased()
-            guard wanted.contains(name), result[name] == nil else { continue }
+            let base = (entry.path as NSString).lastPathComponent.lowercased()
+            guard base.hasSuffix(".csv") else { continue }   // skip GPX/ECG/etc.
             // Reject entries whose declared uncompressed size is implausible (zip-bomb guard)...
             let declared = Int(exactly: entry.uncompressedSize) ?? Int.max
             if declared > Self.maxEntryBytes { continue }
@@ -131,10 +234,16 @@ public struct WhoopExportImporter {
                     if written > Self.maxEntryBytes { throw CancellationError() }
                     buffer.append(chunk)
                 }
-                if !buffer.isEmpty { result[name] = buffer }
             } catch {
                 // Corrupt / truncated / oversized entry: skip rather than import partial data.
                 continue
+            }
+            guard !buffer.isEmpty else { continue }
+            // Route by English name, localized filename alias, then header content (issue #3).
+            if let key = Self.canonicalKey(base: base, data: buffer), result[key] == nil {
+                if total + buffer.count > maxTotalBytes { break }   // aggregate RAM ceiling across retained CSVs
+                result[key] = buffer
+                total += buffer.count
             }
         }
         return result
@@ -240,6 +349,8 @@ public struct WhoopExportImporter {
             if r.workoutStart == nil && r.workoutEnd == nil && r.cycleStart == nil { continue }
 
             r.activityName   = row.cell("activity_name")
+            // Parsed VERBATIM (WHOOP's 0–21 scale) to preserve the CSV round-trip contract; the
+            // 0–21→0–100 Effort rescale is applied at the store-write (WhoopImporter), like day_strain.
             r.activityStrain = row.double("activity_strain")
             r.energyKcal     = row.double("energy_burned_cal")  // CSV "(cal)" == kcal
             r.avgHeartRate   = row.double("average_hr_bpm", "average_heart_rate_bpm")
@@ -273,7 +384,11 @@ public struct WhoopExportImporter {
             r.tzOffsetMin = tz
             r.cycleStart = WhoopTime.parse(row.cell("cycle_start_time"), offsetMinutes: tz)
             r.question = row.cell("question_text", "question")
-            r.answer   = row.cell("answered_yes_no", "answer", "answer_text")
+            // #631: the REAL WHOOP export header is "Answered yes" (-> answered_yes), not the
+            // "Answered yes/no" NOOP's own exporter writes (-> answered_yes_no). Every real WHOOP
+            // journal import silently zeroed out to "without" because neither of the old keys ever
+            // matched, regardless of the account's actual answers.
+            r.answer   = row.cell("answered_yes", "answered_yes_no", "answer", "answer_text")
             r.notes    = row.cell("notes")
 
             // A journal row is only meaningful if it has a question.

@@ -1,8 +1,11 @@
 package com.noop.ui
 
+import com.noop.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,8 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,7 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -49,9 +54,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.noop.ai.AiProvider
 import com.noop.ai.ChatMsg
+import com.noop.ai.CustomAiAuthHeader
 
 /**
- * AI Coach — the single opt-in, bring-your-own-key feature.
+ * AI Coach, the single opt-in, bring-your-own-key feature.
  *
  * Two states:
  *  - No key saved → a setup card: masked key field, provider choice, model dropdown, Save, and a
@@ -66,14 +72,27 @@ import com.noop.ai.ChatMsg
 fun CoachScreen(vm: CoachViewModel = viewModel()) {
     val context = LocalContext.current
     val keyVersion by vm.keyVersion.collectAsStateWithLifecycle()
-    // Re-read the key gate whenever the stored key changes.
-    val hasKey = remember(keyVersion) { vm.hasKey(context) }
+    val provider by vm.provider.collectAsStateWithLifecycle()
+    val customConnected by vm.customConnected.collectAsStateWithLifecycle()
+    // Re-evaluate the gate whenever the stored key, provider, or custom-connect state changes.
+    val configured = remember(keyVersion, provider, customConnected) { vm.isConfigured(context) }
+    // Same day-cycle gate as the liquid Today: the time-of-day sky settles behind the top content when the
+    // user hasn't opted out; otherwise the scaffold paints the plain dark canvas.
+    val showDayCycleBackground = remember { NoopPrefs.showDayCycleBackground(context) }
+    val skyBehindCards = remember { NoopPrefs.skyBehindCards(context) }
 
     ScreenScaffold(
-        title = "Coach",
-        subtitle = "Ask about your recovery, strain, sleep and HRV — grounded in your own numbers.",
+        title = uiString(R.string.l10n_coach_screen_coach_b32c9ad3),
+        subtitle = "Ask about your recovery, strain, sleep and HRV, grounded in your own numbers.",
+        // LIQUID SKY BACKDROP (the pilot pattern — LiquidScreenSky.kt): the liquid sky sits behind the
+        // header and the cards float over the flat canvas below. Reuses the shared LiquidScreenSky() slot
+        // verbatim; when the day-cycle background is off, the scaffold paints the plain surface instead.
+        topBackground = screenBackdropSlot(showDayCycleBackground, skyBehindCards),
+        // Sky-behind-cards fills the viewport so the transparent cards reveal the sky the whole way
+        // down (Today / Trends / Sleep / metric-detail parity - same two prefs, same two behaviours).
+        fullBleedBackground = screenBackdropFullBleed(showDayCycleBackground, skyBehindCards),
     ) {
-        if (!hasKey) {
+        if (!configured) {
             CoachSetup(vm = vm)
         } else {
             CoachChat(vm = vm)
@@ -90,17 +109,24 @@ private fun CoachSetup(vm: CoachViewModel) {
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
+    val customBaseUrl by vm.customBaseUrl.collectAsStateWithLifecycle()
+    val customAuthHeader by vm.customAuthHeader.collectAsStateWithLifecycle()
     var keyInput by remember { mutableStateOf("") }
+    val isCustom = provider == AiProvider.CUSTOM
 
     NoopCard(padding = 20.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Filled.Lock, contentDescription = null, tint = Palette.accent, modifier = Modifier.size(18.dp))
-                Text("Connect a provider", style = NoopType.headline, color = Palette.textPrimary)
+                Text(uiString(R.string.l10n_coach_screen_connect_a_provider_6967f288), style = NoopType.headline, color = Palette.textPrimary)
             }
             Text(
-                "Bring your own API key. It is stored encrypted on this device and only used to " +
-                    "send your question plus a short summary of your metrics to the provider you pick.",
+                if (isCustom)
+                    "Point the coach at any OpenAI-compatible server: a local model (Ollama, LM " +
+                        "Studio, llama.cpp) keeps everything on your device; an API key is optional."
+                else
+                    "Bring your own API key. It is stored encrypted on this device and only used to " +
+                        "send your question plus a short summary of your metrics to the provider you pick.",
                 style = NoopType.subhead, color = Palette.textSecondary,
             )
 
@@ -115,6 +141,41 @@ private fun CoachSetup(vm: CoachViewModel) {
                 )
             }
 
+            // Server URL, Custom (local LLM) only.
+            if (isCustom) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Overline("Server URL")
+                    OutlinedTextField(
+                        value = customBaseUrl,
+                        onValueChange = { vm.setCustomBaseUrl(context, it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = uiString(R.string.l10n_coach_screen_server_url_1d5d1eff) },
+                        placeholder = { Text("http://localhost:11434/v1", style = NoopType.body, color = Palette.textTertiary) },
+                        textStyle = NoopType.mono(13f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = coachFieldColors(),
+                        shape = RoundedCornerShape(14.dp),
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Overline(uiString(R.string.l10n_coach_screen_key_header_3f2a9b10))
+                    SegmentedPillControl(
+                        items = CustomAiAuthHeader.entries,
+                        selection = customAuthHeader,
+                        label = { it.displayName },
+                        onSelect = { vm.setCustomAuthHeader(context, it) },
+                    )
+                    Text(
+                        uiString(R.string.l10n_coach_screen_use_bearer_for_most_local_servers_4429ab64),
+                        style = NoopType.footnote,
+                        color = Palette.textSecondary,
+                    )
+                }
+            }
+
             // Model dropdown + live-list refresh.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,8 +183,8 @@ private fun CoachSetup(vm: CoachViewModel) {
                     Spacer(Modifier.weight(1f))
                     RefreshModelsButton(
                         refreshing = refreshingModels,
-                        // Live fetch needs a saved key; a key typed but not yet saved can't be used.
-                        enabled = vm.hasKey(context),
+                        // Cloud providers need a saved key to fetch; a local server just needs a URL.
+                        enabled = if (isCustom) customBaseUrl.isNotBlank() else vm.hasKey(context),
                         onClick = { vm.refreshModels(context) },
                     )
                 }
@@ -134,25 +195,37 @@ private fun CoachSetup(vm: CoachViewModel) {
                 )
             }
 
-            // Masked key field.
+            // Masked key field, optional for a local Custom server.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Overline("API Key")
+                Overline(if (isCustom) "API Key (optional)" else "API Key")
                 CoachKeyField(
                     value = keyInput,
                     onValueChange = { keyInput = it },
-                    placeholder = "Paste your ${provider.displayName} key",
+                    placeholder = if (isCustom) "Only if your server requires one"
+                                  else "Paste your ${provider.displayName} key",
                 )
             }
 
-            // Save.
-            CoachPrimaryButton(
-                label = "Save key",
-                enabled = keyInput.isNotBlank(),
-                onClick = { vm.saveKey(context, keyInput) },
-            )
+            // Connect (Custom) / Save key (cloud).
+            if (isCustom) {
+                CoachPrimaryButton(
+                    label = uiString(R.string.l10n_coach_screen_connect_b65463cb),
+                    enabled = customBaseUrl.isNotBlank(),
+                    onClick = {
+                        if (keyInput.isNotBlank()) vm.saveKey(context, keyInput)
+                        vm.connectCustom(context)
+                    },
+                )
+            } else {
+                CoachPrimaryButton(
+                    label = uiString(R.string.l10n_coach_screen_save_key_f5216b3a),
+                    enabled = keyInput.isNotBlank(),
+                    onClick = { vm.saveKey(context, keyInput) },
+                )
+            }
 
-            // Privacy note — one line, always visible.
-            PrivacyNote()
+            // Privacy note, one line, always visible.
+            PrivacyNote(local = isCustom)
         }
     }
 }
@@ -172,32 +245,42 @@ private fun CoachChat(vm: CoachViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
 
         // Active-provider strip + reset-key affordance.
-        NoopCard(padding = 14.dp) {
+        NoopCard(padding = 14.dp, tint = Palette.chargeColor) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatePill(title = "${provider.displayName} · $model", tone = StrandTone.Accent, showsDot = true)
-                Spacer(Modifier.weight(1f))
+                // The pill takes the flexible space (ellipsizing a long model id); the Disconnect keeps
+                // its intrinsic single-line width so it can never be squeezed into a vertical stack (#1074).
+                StatePill(
+                    title = uiString(R.string.l10n_coach_screen_provider_displayname_model_8b39f761, provider.displayName, model),
+                    tone = StrandTone.Accent, showsDot = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                val disconnectInteraction = remember { MutableInteractionSource() }
                 Text(
-                    "Reset key",
+                    uiString(R.string.l10n_coach_screen_disconnect_ed28e068),
                     style = NoopType.caption,
                     color = Palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .clickable { vm.clearKey(context) }
+                        .liquidPress(disconnectInteraction)
+                        .clickable(interactionSource = disconnectInteraction, indication = null) { vm.disconnect(context) }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
-                        .semantics { contentDescription = "Reset API key" },
+                        .semantics { contentDescription = uiString(R.string.l10n_coach_screen_disconnect_provider_fa13625c) },
                 )
             }
         }
 
-        // Data-access consent — off by default; no metrics are sent until this is on.
+        // Data-access consent, off by default; no metrics are sent until this is on.
         val consent by vm.consent.collectAsStateWithLifecycle()
-        NoopCard(padding = 14.dp) {
+        NoopCard(padding = 14.dp, tint = Palette.chargeColor) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Let the coach use my data", style = NoopType.subhead, color = Palette.textPrimary)
+                    Text(uiString(R.string.l10n_coach_screen_let_the_coach_use_my_data_405d1188), style = NoopType.subhead, color = Palette.textPrimary)
                     Text(
-                        if (consent) "On — your recovery, sleep, HRV and workouts are shared with the provider for tailored coaching."
-                        else "Off — the coach answers generally and sends none of your metrics.",
+                        if (consent) "On: your recovery, sleep, HRV and workouts are shared with the provider for tailored coaching."
+                        else "Off: the coach answers generally and sends none of your metrics.",
                         style = NoopType.footnote, color = Palette.textTertiary,
                     )
                 }
@@ -208,12 +291,16 @@ private fun CoachChat(vm: CoachViewModel) {
             }
         }
 
+        // Editable system prompt, inline in the settings, collapsed by default. Edits persist and
+        // take effect on the next message (the engine reads the stored prompt fresh per send).
+        CoachInstructions(vm = vm)
+
         // Transcript or empty-state with suggested prompts.
         if (messages.isEmpty()) {
             NoopCard(padding = 18.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Ask anything about your recent recovery, strain, sleep or HRV.",
+                        uiString(R.string.l10n_coach_screen_ask_anything_about_your_recent_recovery_e6c287ca),
                         style = NoopType.subhead, color = Palette.textSecondary,
                     )
                     SuggestedPrompts(onPick = { input = it })
@@ -226,19 +313,29 @@ private fun CoachChat(vm: CoachViewModel) {
             }
         }
 
-        // Error line (red).
-        if (error != null) {
+        // Error line (red). Capture into a stable local first: `error` is a state-backed nullable, and
+        // the `semantics {}` contentDescription is a DEFERRED closure run later during the accessibility
+        // pass — by then a recomposition can have cleared `error`, so `error!!` inside the lambda would
+        // NPE (#1074). The local `errorMsg` is a fixed non-null snapshot the lambda can't null out from
+        // under it.
+        val errorMsg = error
+        if (errorMsg != null) {
             Text(
-                error!!,
+                errorMsg,
                 style = NoopType.subhead,
                 color = Palette.statusCritical,
-                modifier = Modifier.semantics { contentDescription = "Coach error: ${error}" },
+                modifier = Modifier.semantics { contentDescription = uiString(R.string.l10n_coach_screen_coach_error_error_ad9c8c46, errorMsg) },
             )
         }
 
-        // Input row + Send.
+        // Input row + Send, a frosted overlay surface so the composer reads as a docked input bar.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Palette.surfaceOverlay)
+                .border(1.dp, Palette.hairline, RoundedCornerShape(18.dp))
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -249,7 +346,7 @@ private fun CoachChat(vm: CoachViewModel) {
                     if (error != null) vm.clearError()
                 },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Ask your coach…", style = NoopType.body, color = Palette.textTertiary) },
+                placeholder = { Text(uiString(R.string.l10n_coach_screen_ask_your_coach_b1577d4c), style = NoopType.body, color = Palette.textTertiary) },
                 textStyle = NoopType.body,
                 singleLine = false,
                 maxLines = 4,
@@ -268,7 +365,79 @@ private fun CoachChat(vm: CoachViewModel) {
         }
 
         // Privacy note repeated under the input so it's always on screen.
-        PrivacyNote()
+        PrivacyNote(local = provider == AiProvider.CUSTOM)
+    }
+}
+
+/**
+ * Editable system prompt, the instructions that frame the coach. Collapsed by default; expanding
+ * reveals a multi-line field bound to the view model (edits persist to [NoopPrefs] and take effect on
+ * the next message) plus a Reset-to-default control. Inline in the settings, not a separate sheet.
+ */
+@Composable
+private fun CoachInstructions(vm: CoachViewModel) {
+    val context = LocalContext.current
+    val prompt by vm.systemPrompt.collectAsStateWithLifecycle()
+    val hasCustom by vm.hasCustomPrompt.collectAsStateWithLifecycle()
+    var expanded by remember { mutableStateOf(false) }
+
+    val headerInteraction = remember { MutableInteractionSource() }
+    NoopCard(padding = 14.dp, tint = Palette.chargeColor) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (expanded) 10.dp else 0.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .liquidPress(headerInteraction)
+                    .clickable(interactionSource = headerInteraction, indication = null) { expanded = !expanded }
+                    .semantics {
+                        contentDescription = if (expanded) "Collapse coach instructions" else "Edit coach instructions"
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(uiString(R.string.l10n_coach_screen_coach_instructions_28a07975), style = NoopType.subhead, color = Palette.textPrimary)
+                    Text(
+                        if (hasCustom) "Customised. Your edited instructions frame every reply."
+                        else "Edit how the coach thinks and talks. Takes effect on your next message.",
+                        style = NoopType.footnote, color = Palette.textTertiary,
+                    )
+                }
+                Icon(
+                    Icons.Filled.ArrowDropDown,
+                    contentDescription = null,
+                    tint = Palette.textTertiary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+
+            if (expanded) {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { vm.setSystemPrompt(context, it) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 140.dp, max = 260.dp)
+                        .semantics { contentDescription = uiString(R.string.l10n_coach_screen_coach_instructions_editor_b8f3ad31) },
+                    textStyle = NoopType.body,
+                    singleLine = false,
+                    colors = coachFieldColors(),
+                    shape = RoundedCornerShape(14.dp),
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        onClick = { vm.resetSystemPrompt(context) },
+                        enabled = hasCustom,
+                    ) {
+                        Text(
+                            uiString(R.string.l10n_coach_screen_reset_to_default_39c90eb7),
+                            style = NoopType.footnote,
+                            color = if (hasCustom) Palette.accent else Palette.textTertiary,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -282,16 +451,22 @@ private fun ChatBubble(msg: ChatMsg) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
+        // User bubbles = a brand-green tinted bubble; Coach replies = a frosted Charge-tinted surface
+        // so the reply reads as a card in the green Coach world rather than a flat grey box.
+        val bubbleModifier = if (isUser) {
+            Modifier
+                .clip(bubbleShape)
+                .background(Palette.accentMuted)
+                .border(1.dp, Palette.accent.copy(alpha = 0.35f), bubbleShape)
+        } else {
+            Modifier
+                .clip(bubbleShape)
+                .frostedCardSurface(tint = Palette.chargeColor, cornerRadius = 16.dp)
+        }
         Box(
             modifier = Modifier
                 .widthIn(max = 320.dp)
-                .clip(bubbleShape)
-                .background(if (isUser) Palette.accentMuted else Palette.surfaceRaised)
-                .border(
-                    1.dp,
-                    if (isUser) Palette.accent.copy(alpha = 0.35f) else Palette.hairline,
-                    bubbleShape,
-                )
+                .then(bubbleModifier)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -299,7 +474,12 @@ private fun ChatBubble(msg: ChatMsg) {
                     if (isUser) "You" else "Coach",
                     color = if (isUser) Palette.accentHover else Palette.textTertiary,
                 )
-                Text(msg.text, style = NoopType.body, color = Palette.textPrimary)
+                if (isUser) {
+                    Text(msg.text, style = NoopType.body, color = Palette.textPrimary)
+                } else {
+                    // Render the Coach's Markdown (bold/lists/headings) instead of raw symbols (#149).
+                    CoachMarkdown(msg.text, color = Palette.textPrimary)
+                }
             }
         }
     }
@@ -307,15 +487,13 @@ private fun ChatBubble(msg: ChatMsg) {
 
 @Composable
 private fun ThinkingBubble() {
-    val bubbleShape = RoundedCornerShape(16.dp)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Row(
             modifier = Modifier
-                .clip(bubbleShape)
-                .background(Palette.surfaceRaised)
-                .border(1.dp, Palette.hairline, bubbleShape)
+                .clip(RoundedCornerShape(16.dp))
+                .frostedCardSurface(tint = Palette.chargeColor, cornerRadius = 16.dp)
                 .padding(horizontal = 14.dp, vertical = 12.dp)
-                .semantics { contentDescription = "Coach is thinking" },
+                .semantics { contentDescription = uiString(R.string.l10n_coach_screen_coach_is_thinking_aaf91547) },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -324,7 +502,7 @@ private fun ThinkingBubble() {
                 strokeWidth = 2.dp,
                 color = Palette.accent,
             )
-            Text("Thinking…", style = NoopType.subhead, color = Palette.textSecondary)
+            Text(uiString(R.string.l10n_coach_screen_thinking_a60d9c9c), style = NoopType.subhead, color = Palette.textSecondary)
         }
     }
 }
@@ -345,6 +523,7 @@ private fun SuggestedPrompts(onPick: (String) -> Unit) {
         // Simple wrapped column of chips (one per row keeps long prompts readable).
         SUGGESTED_PROMPTS.forEach { prompt ->
             val shape = RoundedCornerShape(50)
+            val chipInteraction = remember { MutableInteractionSource() }
             Text(
                 prompt,
                 style = NoopType.caption,
@@ -354,9 +533,10 @@ private fun SuggestedPrompts(onPick: (String) -> Unit) {
                     .clip(shape)
                     .background(Palette.surfaceInset)
                     .border(1.dp, Palette.hairline, shape)
-                    .clickable { onPick(prompt) }
+                    .liquidPress(chipInteraction)
+                    .clickable(interactionSource = chipInteraction, indication = null) { onPick(prompt) }
                     .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .semantics { contentDescription = "Suggested prompt: $prompt" },
+                    .semantics { contentDescription = uiString(R.string.l10n_coach_screen_suggested_prompt_prompt_379c0b15, prompt) },
             )
         }
     }
@@ -373,6 +553,7 @@ private fun ModelDropdown(
     var expanded by remember { mutableStateOf(false) }
     var showCustom by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
+    val triggerInteraction = remember { MutableInteractionSource() }
     Box {
         Row(
             modifier = Modifier
@@ -380,9 +561,10 @@ private fun ModelDropdown(
                 .clip(shape)
                 .background(Palette.surfaceInset)
                 .border(1.dp, Palette.hairline, shape)
-                .clickable { expanded = true }
+                .liquidPress(triggerInteraction)
+                .clickable(interactionSource = triggerInteraction, indication = null) { expanded = true }
                 .padding(horizontal = 14.dp, vertical = 12.dp)
-                .semantics { contentDescription = "Model: $selected. Tap to change." },
+                .semantics { contentDescription = uiString(R.string.l10n_coach_screen_model_selected_tap_to_change_043056c1, selected) },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(selected, style = NoopType.body, color = Palette.textPrimary, modifier = Modifier.weight(1f))
@@ -408,9 +590,9 @@ private fun ModelDropdown(
                     },
                 )
             }
-            // Free-text escape hatch — any model id the provider accepts can be entered.
+            // Free-text escape hatch, any model id the provider accepts can be entered.
             DropdownMenuItem(
-                text = { Text("Custom…", style = NoopType.body, color = Palette.textSecondary) },
+                text = { Text(uiString(R.string.l10n_coach_screen_custom_dce04fd3), style = NoopType.body, color = Palette.textSecondary) },
                 onClick = {
                     expanded = false
                     showCustom = true
@@ -443,11 +625,11 @@ private fun CustomModelDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Palette.surfaceOverlay,
-        title = { Text("Custom model", style = NoopType.headline, color = Palette.textPrimary) },
+        title = { Text(uiString(R.string.l10n_coach_screen_custom_model_2e3bedea), style = NoopType.headline, color = Palette.textPrimary) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Enter any model id the provider accepts.",
+                    uiString(R.string.l10n_coach_screen_enter_any_model_id_the_provider_dce4bbcb),
                     style = NoopType.subhead,
                     color = Palette.textSecondary,
                 )
@@ -456,8 +638,8 @@ private fun CustomModelDialog(
                     onValueChange = { text = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .semantics { contentDescription = "Custom model id" },
-                    placeholder = { Text("e.g. gpt-4o", style = NoopType.body, color = Palette.textTertiary) },
+                        .semantics { contentDescription = uiString(R.string.l10n_coach_screen_custom_model_id_6ffe2740) },
+                    placeholder = { Text(uiString(R.string.l10n_coach_screen_e_g_gpt_4o_1da2e4d2), style = NoopType.body, color = Palette.textTertiary) },
                     textStyle = NoopType.mono(13f),
                     singleLine = true,
                     colors = coachFieldColors(),
@@ -470,12 +652,12 @@ private fun CustomModelDialog(
                 onClick = { onConfirm(text.trim()) },
                 enabled = text.isNotBlank(),
             ) {
-                Text("Use model", style = NoopType.headline, color = Palette.accent)
+                Text(uiString(R.string.l10n_coach_screen_use_model_8d558ce2), style = NoopType.headline, color = Palette.accent)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", style = NoopType.subhead, color = Palette.textSecondary)
+                Text(uiString(R.string.l10n_coach_screen_cancel_77dfd213), style = NoopType.subhead, color = Palette.textSecondary)
             }
         },
     )
@@ -491,14 +673,21 @@ private fun RefreshModelsButton(
 ) {
     val shape = RoundedCornerShape(50)
     val active = enabled && !refreshing
+    val refreshInteraction = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .clip(shape)
             .background(Palette.surfaceInset)
             .border(1.dp, Palette.hairline, shape)
-            .let { if (active) it.clickable(onClick = onClick) else it }
+            .let {
+                if (active)
+                    it
+                        .liquidPress(refreshInteraction)
+                        .clickable(interactionSource = refreshInteraction, indication = null, onClick = onClick)
+                else it
+            }
             .padding(horizontal = 10.dp, vertical = 6.dp)
-            .semantics { contentDescription = "Fetch models from provider" },
+            .semantics { contentDescription = uiString(R.string.l10n_coach_screen_fetch_models_from_provider_6654e1a0) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -533,7 +722,7 @@ private fun CoachKeyField(
         onValueChange = onValueChange,
         modifier = Modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "API key (hidden)" },
+            .semantics { contentDescription = uiString(R.string.l10n_coach_screen_api_key_hidden_f3cde531) },
         placeholder = { Text(placeholder, style = NoopType.body, color = Palette.textTertiary) },
         textStyle = NoopType.mono(13f),
         singleLine = true,
@@ -550,13 +739,20 @@ private fun CoachKeyField(
 private fun CoachPrimaryButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(14.dp)
     val bg = if (enabled) Palette.accent else Palette.accent.copy(alpha = Palette.disabledOpacity)
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
             .clip(shape)
             .background(bg)
-            .let { if (enabled) it.clickable(onClick = onClick) else it }
+            .let {
+                if (enabled)
+                    it
+                        .liquidPress(interaction)
+                        .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+                else it
+            }
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
@@ -567,21 +763,28 @@ private fun CoachPrimaryButton(label: String, enabled: Boolean, onClick: () -> U
 @Composable
 private fun SendButton(enabled: Boolean, sending: Boolean, onClick: () -> Unit) {
     val bg = if (enabled) Palette.accent else Palette.surfaceInset
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .size(52.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bg)
             .border(1.dp, if (enabled) Color.Transparent else Palette.hairline, RoundedCornerShape(14.dp))
-            .let { if (enabled) it.clickable(onClick = onClick) else it }
-            .semantics { contentDescription = "Send message" },
+            .let {
+                if (enabled)
+                    it
+                        .liquidPress(interaction)
+                        .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+                else it
+            }
+            .semantics { contentDescription = uiString(R.string.l10n_coach_screen_send_message_c70a890d) },
         contentAlignment = Alignment.Center,
     ) {
         if (sending) {
             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.accent)
         } else {
             Icon(
-                Icons.Filled.Send,
+                Icons.AutoMirrored.Filled.Send,
                 contentDescription = null,
                 tint = if (enabled) Palette.surfaceBase else Palette.textTertiary,
                 modifier = Modifier.size(20.dp),
@@ -593,7 +796,7 @@ private fun SendButton(enabled: Boolean, sending: Boolean, onClick: () -> Unit) 
 // MARK: - Privacy note (one line)
 
 @Composable
-private fun PrivacyNote() {
+private fun PrivacyNote(local: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -601,8 +804,12 @@ private fun PrivacyNote() {
     ) {
         Icon(Icons.Filled.Lock, contentDescription = null, tint = Palette.textTertiary, modifier = Modifier.size(13.dp))
         Text(
-            "Private by default — only your question and a short metrics summary are sent, " +
-                "and only after you set a key.",
+            if (local)
+                "The coach talks only to the server URL you set. Point it at a local model to " +
+                    "keep everything on your device. Nothing is sent until you ask."
+            else
+                "Private by default: only your question and a short metrics summary are sent, " +
+                    "and only after you set a key.",
             style = NoopType.footnote,
             color = Palette.textTertiary,
         )
