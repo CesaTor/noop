@@ -1018,6 +1018,11 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Structural-triage hits: the empirical search for the packet TYPE these records arrive under.
     private var ecgProbeCandidates: [String] = []
     private var ecgProbePacketsSeen = 0
+    /// Type-43 (REALTIME_RAW_DATA) records seen while armed, and how many carried a waveform.
+    /// Counts only — the raw flood would drown the log one line per frame. Never folded into
+    /// `ecgProbePacketsSeen`, so the shared verdict keeps its meaning on both platforms.
+    private var ecgProbeRawRecordsSeen = 0
+    private var ecgProbeRawRecordsWithSignal = 0
     /// Non-nil while the listen window is open; drives `ecgProbeArmed`.
     private var ecgProbeDeadline: Date?
     /// Supersedes a previous run's pending verdict timer when the user taps again.
@@ -4085,6 +4090,8 @@ public final class BLEManager: NSObject, ObservableObject {
             ecgProbeSteps = []
             ecgProbeCandidates = []
             ecgProbePacketsSeen = 0
+            ecgProbeRawRecordsSeen = 0
+            ecgProbeRawRecordsWithSignal = 0
         }
         ecgProbeRunToken &+= 1
         ecgProbeDeadline = Date().addingTimeInterval(BLEManager.ecgProbeWindow)
@@ -4098,13 +4105,36 @@ public final class BLEManager: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + BLEManager.ecgProbeWindow) { [weak self] in
             guard let self, self.ecgProbeRunToken == token else { return }
             self.ecgProbeDeadline = nil
-            let text = Whoop5EcgProbe.report(steps: self.ecgProbeSteps,
+            var text = Whoop5EcgProbe.report(steps: self.ecgProbeSteps,
                                              ecgPacketsSeen: self.ecgProbePacketsSeen,
                                              candidateFrames: self.ecgProbeCandidates,
                                              windowSeconds: Int(BLEManager.ecgProbeWindow))
+            text += Self.ecgRawChannelSection(seen: self.ecgProbeRawRecordsSeen,
+                                              withSignal: self.ecgProbeRawRecordsWithSignal,
+                                              windowSeconds: Int(BLEManager.ecgProbeWindow))
             self.log("ECG probe:\n\(text)")
             self.state.ecgProbe = text
         }
+    }
+
+    /// Passive puffin listen: subscribe the 5/MG notify characteristics WITHOUT any hello or command.
+    ///
+    /// Normally these stay unsubscribed until the CLIENT_HELLO ack (see didDiscoverCharacteristics: on an
+    /// unauthenticated link the strap rejects them, which once wedged the bond). This path only runs when
+    /// the bond is already known-unreachable — the hello was refused with insufficient-encryption, or
+    /// suppression latched after it went unanswered — so there is no bond left to wedge. It sends NOTHING
+    /// to the strap beyond the standard CCCD subscribe writes iOS performs for any notify characteristic
+    /// (the same writes 0x2A37 already received on this link); no puffin frame is ever formed here.
+    /// Gated on the Experimental opt-in, 5/MG only, unbonded only. If the CCCD writes are refused too,
+    /// that itself is the finding (notifications need encryption as well); if frames arrive, the router
+    /// (CRC-gated) and the raw-frame recorder observe them.
+    private func startPassivePuffinListen(on peripheral: CBPeripheral) {
+        guard PuffinExperiment.isEnabled, !didBond,
+              selectedModel.deviceFamily == .whoop5 else { return }
+        let targets = whoop5NotifyCharacteristics.filter { !$0.isNotifying }
+        guard !targets.isEmpty else { return }
+        log("WHOOP 5/MG: passive puffin listen — subscribing \(targets.count) notify char(s) with NO hello and NO command (read-only experiment)")
+        for c in targets { requestNotify(c, on: peripheral, reason: "passive puffin listen (unbonded)") }
     }
 
     /// Fold one inbound 5/MG frame into the running probe: either it is a COMMAND_RESPONSE for one of
@@ -4123,6 +4153,7 @@ public final class BLEManager: NSObject, ObservableObject {
         let isCommandResponse = frame.count > 8
             && (frame[8] == 0x24 || Int(frame[8]) == PuffinPacketType.puffinCommandResponse)
         guard frame.count > 10, isCommandResponse else {
+            noteEcgProbeRawRecord(frame)
             noteEcgProbeCandidate(frame)
             return
         }
@@ -4186,6 +4217,41 @@ public final class BLEManager: NSObject, ObservableObject {
         if ecgProbeCandidates.count <= BLEManager.ecgProbeRawDumpLimit {
             log("ECG probe: candidate raw (\(frame.count) B): \(hex(frame))")
         }
+    }
+
+    /// Type-43 accounting for an armed probe run. Counts only, never logs per frame.
+    ///
+    /// Why this sits beside the filtered triage: type-43 (REALTIME_RAW_DATA) is the only ATTESTED
+    /// live ECG sample carrier (one MG, WS50_r00 / fw 50.39.1.0, #891/#1100) — yet it is a multiplexed
+    /// raw pump that also streams unprompted R10/R11 raw, so a record here is NOT an ECG identification.
+    /// The counts still separate "the raw pump ran during the window" from "nothing arrived at all",
+    /// which the filtered verdict alone cannot. Shape + signal-presence only; the caller CRC-gated
+    /// the frame before this runs.
+    private func noteEcgProbeRawRecord(_ frame: [UInt8]) {
+        guard Whoop5Ecg.isRealtimeRawRecord(frame),
+              let present = Whoop5Ecg.realtimeRawSignalPresent(frame) else { return }
+        ecgProbeRawRecordsSeen += 1
+        if present { ecgProbeRawRecordsWithSignal += 1 }
+    }
+
+    /// Observation-only appendix for the probe report: type-43 raw-channel activity during the window.
+    ///
+    /// Deliberately NOT part of the shared `Whoop5EcgProbe.report` — the verdict inputs keep their
+    /// cross-platform meaning and the Kotlin twin stays byte-identical. `nonisolated` (and free of
+    /// actor state) so StrandTests pins the wording without a strap.
+    nonisolated static func ecgRawChannelSection(seen: Int, withSignal: Int, windowSeconds: Int) -> String {
+        var sb = "\nType-43 raw channel in \(windowSeconds)s: "
+        if seen == 0 {
+            sb += "0 records — the multiplexed raw pump emitted nothing during the window "
+                + "(off, or never started).\n"
+        } else {
+            sb += "\(seen) records, \(withSignal) with waveform "
+                + "(more than \(Whoop5Ecg.rawBodyActiveNonZeroBytes) nonzero body bytes).\n"
+        }
+        sb += "Type-43 (REALTIME_RAW_DATA) is a multiplexed raw carrier, not an ECG identification: "
+            + "waveform-present means the raw pump is running; flat means it is off or the electrode "
+            + "circuit is open. Read alongside the verdict above, not instead of it.\n"
+        return sb
     }
 
     /// Shared reboot send + debug trail + watchdog, used by both the production `rebootStrap()` and the
@@ -5877,6 +5943,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                     // PERMANENT rather than transient, so without it a suppressed strap never learns its
                     // firmware or whether it is an MG at all (#490).
                     scheduleUnbondedDisRead()
+                    startPassivePuffinListen(on: peripheral)
                 } else if let hello = selectedModel.deviceFamily.clientHello {
                     // CONTRIBUTOR FIX (issue #17 — diagnosed from the logs, unverified on hardware here):
                     // write CLIENT_HELLO with .withResponse so CoreBluetooth runs just-works bonding when
@@ -5933,6 +6000,8 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                 // WHOOP 5.0/MG puffin notify characteristics (fd4b0003/0004/0005/0007). Retain them but DO
                 // NOT subscribe yet — on an unauthenticated link the strap rejects them with "Authentication
                 // is insufficient", which (per a 5/MG owner's verified flow, issue #17) also wedges the bond.
+                // Confirmed first-hand on an MG (WS50_r00, fw 50.39.1.0): all four CCCD subscribes refused
+                // with Authentication insufficient while standard-profile HR streamed on the same link.
                 // didWriteValueFor subscribes them once the CLIENT_HELLO .withResponse write confirms.
                 if BLEManager.whoop5NotifyChars.contains(c.uuid) {
                     whoop5NotifyCharacteristics.append(c)
@@ -5960,7 +6029,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
             // pairing, so the just-works bond is refused). Gated zero-cost; diagnostic only.
             if TestCentre.active(.connection) {
                 state.append(log: insufficient
-                    ? "otherCentral bondWrite refused=insufficient (strap likely held by the WHOOP app or a stale pairing; cannot start a fresh encrypted bond)"
+                    ? "otherCentral bondWrite refused=insufficient(\(connErrorToken(error))) (strap likely held by the WHOOP app or a stale pairing; cannot start a fresh encrypted bond)"
                     : "otherCentral bondWrite failed=\(connErrorToken(error))", domain: .connection)
             }
             // WHOOP 5/MG first connect: CoreBluetooth won't start a fresh just-works bond against a strap
@@ -5996,6 +6065,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                 // one is an AUTH refusal — the strap actively declined — so it still pauses.
                 recordWhoop5BondRefusal(authRefusal: true,
                                         peripheralUUID: peripheral.identifier.uuidString)
+                startPassivePuffinListen(on: peripheral)
             }
             // Multi-WHOOP stale-pin recovery (#52). When a stale registry pin points at a strap that keeps
             // refusing the encrypted bond ("Encryption/Authentication is insufficient") but a DIFFERENT

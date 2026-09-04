@@ -531,9 +531,9 @@ public enum Whoop5Ecg {
     // TOGGLE_LABRADOR_FILTERED(139)=1 has opened the master gate, the strap emits fixed-size 240-byte
     // REALTIME_RAW_DATA (type 43) records whose body carries an i16-LE series.
     //
-    // Twin of the Kotlin `Whoop5Ecg` helpers of the same names. Android grew the ECG app layer that consumes
-    // these first; the decode is a PROTOCOL fact, so it lands on both platforms together rather than living
-    // only where it happens to be called today. Nothing here decodes a status field, an HR, or a rhythm
+    // Twin of the Kotlin `Whoop5Ecg` helpers of the same names. No app layer on either platform consumes
+    // these yet — the decode is a PROTOCOL fact, so it lands on both sides together rather than living only
+    // where it happens to be called first. Nothing here decodes a status field, an HR, or a rhythm
     // classification — only the sample series and a byte-fill count. Callers gate on the frame's CRC first.
 
     /// Every REALTIME_RAW_DATA record OBSERVED on the MG was exactly this long.

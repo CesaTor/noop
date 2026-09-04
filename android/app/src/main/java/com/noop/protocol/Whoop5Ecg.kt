@@ -386,8 +386,9 @@ object Whoop5Ecg {
     // TOGGLE_LABRADOR_FILTERED(139)=1 has opened the master gate, the strap emits fixed-size 240-byte
     // REALTIME_RAW_DATA (type 43) records whose body carries an i16-LE series. The offsets below are the
     // OBSERVED layout, and they live here — with the other Labrador protocol facts — rather than in the app
-    // layer, so the three consumers (live view, signal classifier, waveform export) cannot drift apart and
-    // so the decode is unit-testable without a strap.
+    // layer, so the first consumer (live view, signal classifier, or waveform export) cannot establish a
+    // divergent layout, and so the decode is unit-testable without a strap. No app-layer caller exists yet
+    // on either platform.
     //
     // What this layout is NOT: the documented 17-byte status header ([HEADER_LENGTH]) is the FILTERED
     // packet's, and it is a separate question whether it also sits inside this record (see #891 §7). Nothing
