@@ -27,10 +27,18 @@ class ModelListKeyErrorTest {
         val customErr = AiCoach.modelListKeyError(AiProvider.CUSTOM, null, true, AiProvider.OPENAI)
         assertNotNull(customErr)
         assert(customErr!!.contains("OpenAI")) { "must name the owner: $customErr" }
-
         val cloudErr = AiCoach.modelListKeyError(AiProvider.ANTHROPIC, null, true, AiProvider.OPENAI)
         assertNotNull(cloudErr)
         assert(cloudErr!!.contains("OpenAI")) { "must name the owner: $cloudErr" }
+    }
+
+    @Test
+    fun `legacy key serves cloud but never a custom URL`() {
+        // Owner null = saved before provider tracking: keeps working for cloud (guarded read allows).
+        assertNull(AiCoach.modelListKeyError(AiProvider.OPENAI, "sk-x", true, null))
+        // ...but is withheld from a Custom endpoint, never leaked to it.
+        val err = AiCoach.modelListKeyError(AiProvider.CUSTOM, "sk-x", true, null)
+        assertNotNull(err)
     }
 
     @Test
