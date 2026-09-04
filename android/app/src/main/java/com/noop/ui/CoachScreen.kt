@@ -139,6 +139,9 @@ private fun CoachSetup(vm: CoachViewModel) {
                     selection = provider,
                     label = { it.displayName },
                     onSelect = { vm.selectProvider(context, it) },
+                    // Four providers overflow a phone-width track at intrinsic size and clip Custom
+                    // off-screen with no scroll — equal-width segments keep every option visible.
+                    adaptsToAvailableWidth = true,
                 )
             }
 
