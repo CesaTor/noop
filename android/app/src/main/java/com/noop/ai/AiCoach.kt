@@ -167,39 +167,42 @@ class AiCoach(
     /**
      * Fetch the provider's live list of model ids, using the saved API key.
      *
-     * Best-effort: GETs the provider's models endpoint and returns the ids it advertises.
-     * On any failure (no key, network, bad key, malformed body) this returns an EMPTY list
-     * rather than throwing, the caller simply keeps its curated/static list. The result is
+     * Never silent: every failure comes back as [ModelListOutcome.error] with the concrete cause
+     * (key saved for another provider, unreachable server, HTTP status, unparseable body) so the
+     * setup card can say WHY the list didn't load — an empty list with no reason is what made a
+     * withheld key look like a broken server. The guarded key read is deliberate: a key saved for
+     * one provider is never sent to another provider's (or a Custom) endpoint, so a cross-provider
+     * key reports "saved for X", not a 401 from a request that went out without it. The result is
      * filtered to the ids that make sense for chat (OpenAI: ids starting with "gpt" or "o";
      * Anthropic: all returned ids) and de-duplicated.
      *
-     * Runs on [Dispatchers.IO].
+     * Runs on [Dispatchers.IO]. Never throws.
      */
     suspend fun fetchModels(
         ctx: Context,
         provider: AiProvider,
         customBaseUrl: String = "",
         customAuthHeader: CustomAiAuthHeader = CustomAiAuthHeader.BEARER,
-    ): List<String> = withContext(Dispatchers.IO) {
-        // Guarded read: only a key saved for THIS provider (or a legacy cloud key) is used, never one
-        // provider's key against another's models endpoint.
+    ): ModelListOutcome = withContext(Dispatchers.IO) {
         val key = AiKeyStore.read(ctx, provider)
-        // Cloud providers need a key to list models; a local Custom server usually doesn't.
-        if (key == null && provider != AiProvider.CUSTOM) return@withContext emptyList()
+        modelListKeyError(provider, key, AiKeyStore.read(ctx) != null, AiKeyStore.keyOwner(ctx))
+            ?.let { return@withContext ModelListOutcome(emptyList(), it) }
 
         val url = when (provider) {
             AiProvider.CUSTOM -> {
-                if (customBaseUrl.isBlank()) return@withContext emptyList()
-                // Best-effort: a bad/public-cleartext URL just yields no model list here (the chat
-                // path surfaces the precise guard error). Never throw out of fetchModels.
-                runCatching { customModelsUrl(customBaseUrl) }.getOrNull() ?: return@withContext emptyList()
+                if (customBaseUrl.isBlank()) {
+                    return@withContext ModelListOutcome(emptyList(), "Set your server URL first.")
+                }
+                // The chat path surfaces the precise guard error; here a bad URL is itself the outcome.
+                runCatching { customModelsUrl(customBaseUrl) }.getOrNull()
+                    ?: return@withContext ModelListOutcome(emptyList(), "That server URL is not allowed — use https, or a local http address.")
             }
             else -> provider.modelsEndpoint
         }
 
         val builder = Request.Builder().url(url).get()
         when (provider) {
-            // key is non-null here: the early return above only spares the Custom provider.
+            // key is non-null here for the cloud providers: the key error above only spares Custom.
             AiProvider.OPENAI -> builder.addHeader("Authorization", "Bearer ${key!!}")
             AiProvider.ANTHROPIC -> {
                 builder.addHeader("x-api-key", key!!)
@@ -211,15 +214,30 @@ class AiCoach(
 
         runCatching {
             val (code, text) = execute(builder.build())
-            if (code !in 200..299) return@runCatching emptyList<String>()
+            if (code !in 200..299) {
+                val hint = when {
+                    code == 401 || code == 403 -> "the server refused the request (wrong or missing API key for this server)"
+                    code == 404 -> "no /models endpoint here — check the server URL (the base, not /chat/completions)"
+                    else -> "HTTP $code"
+                }
+                return@runCatching ModelListOutcome(emptyList(), "Model list failed: $hint.")
+            }
 
             // Gemini is shaped differently ({"models":[{"name":"models/…"}]}), so it has its own pure
             // parse; every other provider is OpenAI-shaped ({"data":[{"id":"…"}]}).
-            if (provider == AiProvider.GEMINI) return@runCatching parseGeminiModels(text)
-
-            parseOpenAiCompatibleModels(provider, text)
-        }.getOrDefault(emptyList())
+            val ids = if (provider == AiProvider.GEMINI) parseGeminiModels(text)
+            else parseOpenAiCompatibleModels(provider, text)
+            if (ids.isEmpty()) {
+                ModelListOutcome(emptyList(), "The server answered but listed no models — check the URL points at the server base.")
+            } else {
+                ModelListOutcome(ids, null)
+            }
+        }.getOrDefault(ModelListOutcome(emptyList(), "Model list failed: the server could not be reached — check the URL and that the server is running."))
     }
+
+    /** The ids a model-list fetch advertised, plus the concrete reason when it fetched nothing. */
+    data class ModelListOutcome(val models: List<String>, val error: String?)
+
 
     // ---------------------------------------------------------------------------------------
     // Context builder
@@ -767,6 +785,27 @@ class AiCoach(
     }
 
     companion object {
+        /**
+         * Why a model-list fetch cannot even be attempted, or null when it can. Pure so it is
+         * JVM-testable without a network or a device: [key] is the guarded read for [provider],
+         * [anyKeySaved] whether ANY key is stored, [owner] which provider that key was saved for.
+         */
+        internal fun modelListKeyError(
+            provider: AiProvider,
+            key: String?,
+            anyKeySaved: Boolean,
+            owner: AiProvider?,
+        ): String? = when {
+            key != null -> null
+            provider == AiProvider.CUSTOM && !anyKeySaved -> null // keyless local server: proceed unauthenticated
+            provider == AiProvider.CUSTOM ->
+                // A key IS stored but belongs to a cloud provider — the guarded read withheld it rather
+                // than leak it to this endpoint. Name the owner so the fix (re-save under Custom) is obvious.
+                "The saved API key belongs to ${owner?.displayName ?: "another provider"} and was not sent — paste it while Custom is selected and tap Connect, or leave the key empty for a keyless server."
+            !anyKeySaved -> "No API key saved — paste your ${provider.displayName} key and tap Save first."
+            else -> "The saved API key belongs to ${owner?.displayName ?: "another provider"} and was not sent — save your ${provider.displayName} key first."
+        }
+
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
         /**

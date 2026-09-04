@@ -109,6 +109,7 @@ private fun CoachSetup(vm: CoachViewModel) {
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
+    val setupError by vm.error.collectAsStateWithLifecycle()
     val customBaseUrl by vm.customBaseUrl.collectAsStateWithLifecycle()
     val customAuthHeader by vm.customAuthHeader.collectAsStateWithLifecycle()
     var keyInput by remember { mutableStateOf("") }
@@ -223,7 +224,9 @@ private fun CoachSetup(vm: CoachViewModel) {
                     onClick = { vm.saveKey(context, keyInput) },
                 )
             }
-
+            // Refresh/Connect failure reason (red). The model list used to fail silently — an empty
+            // dropdown with no reason made a never-sent key look like a broken server.
+            setupError?.let { Text(it, style = NoopType.subhead, color = Palette.statusCritical) }
             // Privacy note, one line, always visible.
             PrivacyNote(local = isCustom)
         }
