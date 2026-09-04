@@ -544,9 +544,12 @@ private fun EcgCaptureCard(vm: AppViewModel, onRunStarted: () -> Unit) {
 @Composable
 private fun EcgProbeStatus(text: String, onClose: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.space4)) {
-        if (text == WhoopBleClient.ECG_PROBE_WAITING) {
+        if (text == WhoopBleClient.ECG_PROBE_WAITING || text == WhoopBleClient.ECG_PROBE_ARMING) {
             Text(
-                uiString(R.string.l10n_ecg_screen_running),
+                uiString(
+                    if (text == WhoopBleClient.ECG_PROBE_ARMING) R.string.l10n_ecg_screen_arming
+                    else R.string.l10n_ecg_screen_running,
+                ),
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )

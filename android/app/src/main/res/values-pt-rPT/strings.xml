@@ -2693,6 +2693,7 @@
     <string name="l10n_ecg_screen_blocked_variant">A aguardar que a bracelete se identifique como WHOOP MG.</string>
     <string name="l10n_ecg_screen_blocked_bond">Precisa da ligação cifrada — emparelha primeiro a bracelete.</string>
     <string name="l10n_ecg_screen_running">Captura em curso — continua a segurar o fecho.</string>
+    <string name="l10n_ecg_screen_arming">A aguardar a primeira forma de onda — mantém o fecho premido.</string>
     <string name="l10n_ecg_screen_cancel">Cancelar</string>
     <string name="l10n_ecg_screen_strip_description">Traçado de ECG</string>
     <string name="l10n_health_screen_ecg">ECG</string>
