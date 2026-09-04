@@ -1,5 +1,7 @@
 package com.noop.ui
 
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,12 +23,22 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.ble.PuffinExperiment
+import com.noop.ble.WhoopBleClient
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,7 +98,9 @@ fun EcgScreen(vm: AppViewModel) {
     val deviceId = vm.activeStrapId
     var views by remember { mutableStateOf<List<EcgSessionView>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(deviceId) {
+    var runEpoch by remember { mutableStateOf(0) }
+    val scope = rememberCoroutineScope()
+    suspend fun reload() {
         loaded = false
         val sessions = runCatching { vm.repo.ecgSessions(deviceId) }.getOrDefault(emptyList())
         views = sessions.map { session ->
@@ -95,6 +109,7 @@ fun EcgScreen(vm: AppViewModel) {
         }
         loaded = true
     }
+    LaunchedEffect(deviceId, runEpoch) { reload() }
     var selectedId by remember(deviceId) { mutableStateOf<String?>(null) }
     val selected = views.firstOrNull { it.session.id == selectedId }
 
@@ -103,6 +118,17 @@ fun EcgScreen(vm: AppViewModel) {
         subtitle = uiString(R.string.l10n_ecg_screen_subtitle),
     ) {
         EcgFramingCard()
+        EcgCaptureCard(
+            vm = vm,
+            onRunStarted = {
+                // The verdict lands ~30 s after Start; reload then so the new session
+                // appears without a manual pull.
+                scope.launch {
+                    delay(35_000)
+                    runEpoch++
+                }
+            },
+        )
         if (!loaded) return@ScreenScaffold
         when {
             selected != null -> EcgDetail(selected) { selectedId = null }
@@ -383,6 +409,159 @@ private fun EcgProvenanceCard(session: EcgSessionEntity) {
                 ),
                 style = NoopType.footnote,
                 color = Palette.textSecondary,
+            )
+        }
+    }
+}
+// MARK: - Capture controls (page-owned start/stop)
+
+/** Why a capture cannot start right now. Pure so unit tests pin every case without a strap. */
+internal enum class EcgCaptureBlock {
+    DISCONNECTED,
+    NOT_MG,
+    NOT_BONDED,
+}
+
+/**
+ * Nil when a capture can start; otherwise the blocking precondition (link, hardware, bond).
+ * Deliberately NOT gated on Test Centre: the listen opt-in + MG attestation + encrypted bond
+ * are the safety gates, and a shipped feature must not hide behind a diagnostics switch.
+ * Twin of Swift `EcgCaptureBlock.check`.
+ */
+internal fun ecgCaptureBlockedReason(connected: Boolean, isMG: Boolean, bonded: Boolean): EcgCaptureBlock? {
+    if (!connected) return EcgCaptureBlock.DISCONNECTED
+    if (!isMG) return EcgCaptureBlock.NOT_MG
+    if (!bonded) return EcgCaptureBlock.NOT_BONDED
+    return null
+}
+
+/**
+ * The listen opt-in as reactive state (SharedPreferences isn't observable, so watch the
+ * experiments file like HealthScreen does). Used by the More drawer entry; the Health row
+ * keeps its own inline watcher.
+ */
+@Composable
+internal fun rememberEcgListen(): Boolean {
+    val context = LocalContext.current
+    var rev by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val prefs = context.getSharedPreferences(PuffinExperiment.PREFS, Context.MODE_PRIVATE)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == PuffinExperiment.KEY_WHOOP5_ECG) rev++
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    return remember(rev) { PuffinExperiment.from(context.applicationContext).ecgListen }
+}
+
+/** Page-owned Start/Stop for an MG ECG capture run. Same wire flow as macOS (`ecgStartCapture` /
+ *  `ecgStopCapture` — bonded-MG + opt-in gated again at send time). The wrist selection stays
+ *  out: it is a persistent strap write with its own confirmation elsewhere. */
+@Composable
+private fun EcgCaptureCard(vm: AppViewModel, onRunStarted: () -> Unit) {
+    val live by vm.live.collectAsStateWithLifecycle()
+    val variant by vm.ble.whoop5VariantFlow.collectAsStateWithLifecycle()
+    val running by vm.ble.ecgCaptureRunning.collectAsStateWithLifecycle()
+    val probe by vm.ble.ecgProbe.collectAsStateWithLifecycle()
+    var confirm by remember { mutableStateOf(false) }
+    val block = ecgCaptureBlockedReason(live.connected, variant.isMG, live.encryptedBond)
+    NoopCard {
+        Column(verticalArrangement = Arrangement.spacedBy(Metrics.space8)) {
+            when {
+                block != null -> Text(
+                    text = when (block) {
+                        EcgCaptureBlock.DISCONNECTED ->
+                            uiString(R.string.l10n_ecg_screen_blocked_offline)
+                        EcgCaptureBlock.NOT_MG ->
+                            uiString(R.string.l10n_ecg_screen_blocked_variant)
+                        EcgCaptureBlock.NOT_BONDED ->
+                            uiString(R.string.l10n_ecg_screen_blocked_bond)
+                    },
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+                running -> NoopButton(
+                    text = uiString(R.string.l10n_ecg_screen_stop_capture),
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    onClick = { vm.ble.ecgStopCapture() },
+                )
+                else -> NoopButton(
+                    text = uiString(R.string.l10n_ecg_screen_start_capture),
+                    fullWidth = true,
+                    onClick = { confirm = true },
+                )
+            }
+            probe?.let { EcgProbeStatus(it) { vm.ble.clearEcgProbe() } }
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            containerColor = Palette.surfaceOverlay,
+            title = {
+                Text(
+                    uiString(R.string.l10n_ecg_screen_start_capture),
+                    style = NoopType.title2,
+                    color = Palette.textPrimary,
+                )
+            },
+            text = {
+                Text(
+                    uiString(R.string.l10n_ecg_screen_confirm_body),
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    vm.ble.ecgStartCapture()
+                    onRunStarted()
+                }) {
+                    Text(
+                        uiString(R.string.l10n_ecg_screen_start_capture),
+                        style = NoopType.body,
+                        color = Palette.accent,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = false }) {
+                    Text(
+                        uiString(R.string.l10n_ecg_screen_cancel),
+                        style = NoopType.body,
+                        color = Palette.textSecondary,
+                    )
+                }
+            },
+        )
+    }
+}
+
+/** The running probe state plus the finished verdict, read-only. */
+@Composable
+private fun EcgProbeStatus(text: String, onClose: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space4)) {
+        if (text == WhoopBleClient.ECG_PROBE_WAITING) {
+            Text(
+                uiString(R.string.l10n_ecg_screen_running),
+                style = NoopType.subhead,
+                color = Palette.textSecondary,
+            )
+        } else {
+            Text(
+                text,
+                style = NoopType.mono,
+                color = Palette.textSecondary,
+            )
+        }
+        TextButton(onClick = onClose) {
+            Text(
+                uiString(R.string.l10n_ecg_screen_cancel),
+                style = NoopType.footnote,
+                color = Palette.textTertiary,
             )
         }
     }

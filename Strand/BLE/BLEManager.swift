@@ -1024,11 +1024,19 @@ public final class BLEManager: NSObject, ObservableObject {
     private var ecgProbeRawRecordsSeen = 0
     private var ecgProbeRawRecordsWithSignal = 0
     /// Durable-capture session id for this probe run ("ecg-<startTsMs>"), opened in
-    /// `beginEcgProbeRun` so the banked type-43 rows have a session to belong to. Nil when no
-    /// run has opened one yet this process.
+    /// `openEcgProbeWindow` on first waveform so banked sessions start with signal.
+    /// Nil until the window opens (pre-signal flats are counted, never banked).
     private var ecgProbeSessionId: String?
     /// Session-scoped record index for the banked rows (PK tiebreak alongside tsMs). Reset per run.
     private var ecgProbeWaveSeq = 0
+    /// Whether the capture window has opened (first waveform seen). Pre-signal flats are counted
+    /// for the report appendix but never banked — the durable session starts with signal.
+    private var ecgProbeWindowOpen = false
+    /// Whether this run may open a durable session. False for the Stop path (its OFF sequence ends
+    /// a capture rather than starting one).
+    private var ecgProbeBankSession = true
+    /// When the current run was tapped, for the honest elapsed-seconds denominator in the verdict.
+    private var ecgProbeRunStart = Date()
     /// Non-nil while the listen window is open; drives `ecgProbeArmed`.
     private var ecgProbeDeadline: Date?
     /// Supersedes a previous run's pending verdict timer when the user taps again.
@@ -3941,8 +3949,15 @@ public final class BLEManager: NSObject, ObservableObject {
 
     /// Sentinel shown while a probe run is in flight (twin of the #592/#690 constants).
     public static let ecgProbeWaiting = "__waiting__"
+    /// Sentinel while a probe run is ARMED-WAITING for its first waveform (twin of the above).
+    /// The capture window — and its 30 s verdict — opens on first signal, not on tap, so a stored
+    /// session starts with waveform instead of pump-idle. UI treats both sentinels as "running".
+    public static let ecgProbeArming = "__arming__"
     /// How long the probe listens for ECG-shaped packets before rendering its verdict.
     private static let ecgProbeWindow: TimeInterval = 30
+    /// How long a run waits for its first waveform before rendering a verdict on the silence.
+    /// Bounds the tap-to-verdict span at outer + window (60 + 30 s) worst case.
+    private static let ecgProbeOuterWindow: TimeInterval = 60
     /// Cap on recorded candidate-frame lines, so a chatty stream can't grow the report without bound.
     private static let ecgProbeMaxCandidates = 12
     /// Cap on recorded steps. A run sends at most three, so the headroom is for UNSOLICITED replies —
@@ -4045,7 +4060,6 @@ public final class BLEManager: NSObject, ObservableObject {
         log("ECG probe: SELECT_WRIST=\(wrist.token) (raw \(wrist.rawValue)) — PERSISTENT strap write; the "
             + "right=0/left=1 mapping is inferred from the client enum order, not confirmed on hardware")
         sendEcgCommand(.selectWrist, arg: wrist.rawValue)
-        scheduleEcgProbeVerdict()
     }
 
     /// The documented turn-on sequence MINUS `selectWrist` (which the user runs separately, above):
@@ -4058,7 +4072,6 @@ public final class BLEManager: NSObject, ObservableObject {
         sendEcgCommand(.toggleLabradorFiltered, arg: 1)
         sendEcgCommand(.toggleLabradorRawSave, arg: 1)
         sendEcgCommand(.toggleLabradorDataGeneration, arg: Whoop5Ecg.ControlSignal.start.rawValue)
-        scheduleEcgProbeVerdict()
     }
 
     /// The explicit OFF path: stop generation first, then drop both streams.
@@ -4085,12 +4098,10 @@ public final class BLEManager: NSObject, ObservableObject {
         sendEcgCommand(.toggleLabradorRawSave, arg: 0)
         sendEcgCommand(.toggleLabradorFiltered, arg: 0)
         ecgMayBeRunning = false
-        if reportsResult { scheduleEcgProbeVerdict() }
     }
 
     /// Clear the probe result (dialog dismissed).
     public func clearEcgProbe() { state.ecgProbe = nil }
-
     private func beginEcgProbeRun(clearingSteps: Bool, openSession: Bool = true) {
         if clearingSteps {
             ecgProbeSteps = []
@@ -4099,15 +4110,29 @@ public final class BLEManager: NSObject, ObservableObject {
             ecgProbeRawRecordsSeen = 0
             ecgProbeRawRecordsWithSignal = 0
             ecgProbeWaveSeq = 0
+            ecgProbeWindowOpen = false
+            ecgProbeSessionId = nil
         }
         ecgProbeRunToken &+= 1
-        // Durable capture: one session row per probe run, so the ECG page can read the run back.
-        // Skipped for the Stop path (openSession: false): the OFF sequence ends a capture rather
-        // than starting one, and banking an empty session per Stop is what littered the page.
-        // Fire-and-forget through the Collector (which owns the store) — a missing store or a
-        // throw banks nothing and never touches the probe verdict or the BLE path. Already gated:
-        // every caller passed the bonded-MG + opt-in gates before opening a run.
-        if openSession {
+        ecgProbeBankSession = openSession
+        ecgProbeRunStart = Date()
+        // ARMED-WAITING, not capturing yet: the deadline is the outer silence bound, and the
+        // verdict scheduled below fires on it unless the window opens first (which stands the
+        // outer down via the windowOpen flag and schedules its own). No session opens here —
+        // `openEcgProbeWindow` opens it on first waveform so stored sessions start with signal.
+        ecgProbeDeadline = Date().addingTimeInterval(BLEManager.ecgProbeOuterWindow)
+        state.ecgProbe = BLEManager.ecgProbeArming
+        scheduleEcgProbeVerdict(after: BLEManager.ecgProbeOuterWindow, windowRun: false)
+    }
+
+    /// First waveform while armed: the capture window opens HERE. Re-arms the deadline to the
+    /// capture window, opens the durable session (when this run banks), flips the status from
+    /// arming to capturing, and schedules the window's verdict. Idempotent per run.
+    private func openEcgProbeWindow() {
+        guard !ecgProbeWindowOpen else { return }
+        ecgProbeWindowOpen = true
+        ecgProbeDeadline = Date().addingTimeInterval(BLEManager.ecgProbeWindow)
+        if ecgProbeBankSession {
             let startedAtMs = Int(Date().timeIntervalSince1970 * 1000)
             let session = EcgWaveformSession(id: EcgWaveformSession.makeId(startTsMs: startedAtMs),
                                              startedAtMs: startedAtMs,
@@ -4117,24 +4142,30 @@ public final class BLEManager: NSObject, ObservableObject {
             let sessionDeviceId = deviceId
             Task { @MainActor in await collector?.openEcgSession(session, deviceId: sessionDeviceId) }
         }
-        ecgProbeDeadline = Date().addingTimeInterval(BLEManager.ecgProbeWindow)
         state.ecgProbe = BLEManager.ecgProbeWaiting
+        log("ECG probe: first waveform — capture window open (30 s)")
+        scheduleEcgProbeVerdict(after: BLEManager.ecgProbeWindow, windowRun: true)
     }
 
-    /// Render the verdict once the listen window closes. BLE callbacks and this timer both run on the
-    /// main queue, so the token check is race-free without a lock.
-    private func scheduleEcgProbeVerdict() {
+    /// Render the verdict when a phase closes. `windowRun: false` is the outer arming verdict
+    /// (fires unless the window opened first); `windowRun: true` is the capture verdict. BLE
+    /// callbacks and these timers run on the main queue, so the token check is race-free
+    /// without a lock. The reported seconds are the honest tap-to-verdict elapsed, not the
+    /// nominal window — an outer-timeout run waited longer than its silence lasted.
+    private func scheduleEcgProbeVerdict(after delay: TimeInterval, windowRun: Bool) {
         let token = ecgProbeRunToken
-        DispatchQueue.main.asyncAfter(deadline: .now() + BLEManager.ecgProbeWindow) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.ecgProbeRunToken == token else { return }
+            if !windowRun && self.ecgProbeWindowOpen { return }
             self.ecgProbeDeadline = nil
+            let elapsedSec = max(1, Int(Date().timeIntervalSince(self.ecgProbeRunStart)))
             var text = Whoop5EcgProbe.report(steps: self.ecgProbeSteps,
                                              ecgPacketsSeen: self.ecgProbePacketsSeen,
                                              candidateFrames: self.ecgProbeCandidates,
-                                             windowSeconds: Int(BLEManager.ecgProbeWindow))
+                                             windowSeconds: elapsedSec)
             text += Self.ecgRawChannelSection(seen: self.ecgProbeRawRecordsSeen,
                                               withSignal: self.ecgProbeRawRecordsWithSignal,
-                                              windowSeconds: Int(BLEManager.ecgProbeWindow))
+                                              windowSeconds: elapsedSec)
             self.log("ECG probe:\n\(text)")
             self.state.ecgProbe = text
             // Auto-stop: a turn-on run leaves generation + both streams ON (battery + BLE airtime
@@ -4262,10 +4293,14 @@ public final class BLEManager: NSObject, ObservableObject {
               let present = Whoop5Ecg.realtimeRawSignalPresent(frame) else { return }
         ecgProbeRawRecordsSeen += 1
         if present { ecgProbeRawRecordsWithSignal += 1 }
+        // The capture window opens on first SIGNAL, not on tap: pre-signal flats are counted
+        // above (the appendix distinguishes "nothing arrived" from "arrived flat") but never
+        // banked, so a stored session starts with waveform instead of pump-idle.
+        if present && !ecgProbeWindowOpen { openEcgProbeWindow() }
         // Durable capture for the ECG page: bank the record verbatim beside the counting above.
         // Fire-and-forget (async store API, no UI coupling, never throws into the BLE path).
         // `hrBpm` stamps the current live standard HR; nil means unstamped, never a fabricated number.
-        guard let sessionId = ecgProbeSessionId else { return }
+        guard ecgProbeWindowOpen, let sessionId = ecgProbeSessionId else { return }
         let row = EcgWaveformSample(seq: ecgProbeWaveSeq,
                                     tsMs: Int(Date().timeIntervalSince1970 * 1000),
                                     hrBpm: state.heartRate,

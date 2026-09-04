@@ -498,6 +498,9 @@ IT: dict[str, str] = {
     'Delete capture': 'Elimina acquisizione',
     'Delete this capture?': 'Eliminare questa acquisizione?',
     'This removes the banked records for this capture. The strap is untouched.': 'Questo rimuove i record salvati di questa acquisizione. La fascia non viene toccata.',
+    'Waiting for the first waveform — hold the clasp.': 'In attesa della prima forma d’onda — tieni premuta la fibbia.',
+    'Waveform BPM': 'BPM forma d’onda',
+    'too noisy to read': 'troppo rumoroso da leggere',
 }
 
 

@@ -1602,7 +1602,7 @@ private struct EcgWristSheet: View {
 private struct EcgProbeResultView: View {
     let text: String
     let onClose: () -> Void
-    private var waiting: Bool { text == BLEManager.ecgProbeWaiting }
+    private var waiting: Bool { text == BLEManager.ecgProbeWaiting || text == BLEManager.ecgProbeArming }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

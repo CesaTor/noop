@@ -481,6 +481,9 @@ DE: dict[str, str] = {
     "Delete capture": "Aufnahme löschen",
     "Delete this capture?": "Diese Aufnahme löschen?",
     "This removes the banked records for this capture. The strap is untouched.": "Dies entfernt die gespeicherten Datensätze dieser Aufnahme. Der Strap bleibt unberührt.",
+    "Waiting for the first waveform — hold the clasp.": "Warte auf die erste Wellenform — halte die Spange.",
+    "Waveform BPM": "Wellenform-BPM",
+    "too noisy to read": "zu verrauscht zum Ablesen",
 }
 
 
